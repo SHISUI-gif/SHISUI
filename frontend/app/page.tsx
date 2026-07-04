@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type TouchEvent, type WheelEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { AvatarDisplay } from "@/components/AvatarDisplay"
+import { LocalClock } from "@/components/LocalClock"
 import { LoginForm } from "@/components/auth/LoginForm"
 import { ActivityLog } from "@/components/chat/ActivityLog"
 import { ChatMessages } from "@/components/chat/ChatMessages"
@@ -30,7 +31,7 @@ import type {
   EvolutionProposal,
   UserFeedbackEntry,
 } from "@/lib/types"
-import { EASE } from "@/lib/motion"
+import { EASE, SPRING } from "@/lib/motion"
 
 const staggerContainer = {
   hidden: {},
@@ -410,6 +411,15 @@ export default function Home() {
             {/* 常時ゆっくり動く3D背景。ヒーロー画面のみ、チャット画面には出さない */}
             <AmbientBackground />
 
+            <motion.div
+              className="absolute top-6 right-6 z-10 sm:top-8 sm:right-8"
+              initial={ready ? { opacity: 0, y: -12 } : false}
+              animate={ready ? { opacity: 1, y: 0 } : undefined}
+              transition={{ duration: 0.6, ease: EASE, delay: 0.2 }}
+            >
+              <LocalClock />
+            </motion.div>
+
             {/* ghost layer — extreme size contrast */}
             <motion.p
               className="pointer-events-none absolute top-[18%] left-1/2 -translate-x-1/2 font-[family-name:var(--font-syne)] text-[clamp(4rem,18vw,14rem)] font-extrabold leading-none tracking-[-0.06em] text-white/[0.04] select-none"
@@ -459,15 +469,19 @@ export default function Home() {
             </motion.span>
 
             <div className="relative z-10 mt-8 flex flex-col items-center gap-4 px-6">
-              <AvatarDisplay unlockedItems={avatarItems} mood={mood} />
-              <motion.p
-                className="text-center font-mono text-sm text-white/50 sm:text-base"
-                initial={ready ? { opacity: 0, y: 16 } : false}
-                animate={ready ? { opacity: 1, y: 0 } : undefined}
-                transition={{ duration: 0.8, ease: EASE, delay: 0.9 }}
-              >
-                {user.name}さん、今日は何を話そうか?
-              </motion.p>
+              <motion.div whileHover={{ scale: 1.05 }} transition={SPRING}>
+                <AvatarDisplay unlockedItems={avatarItems} mood={mood} />
+              </motion.div>
+              <div className="overflow-hidden">
+                <motion.p
+                  className="text-center font-mono text-sm text-white/50 sm:text-base"
+                  initial={ready ? { y: "100%", opacity: 0 } : false}
+                  animate={ready ? { y: "0%", opacity: 1 } : undefined}
+                  transition={{ duration: 0.8, ease: EASE, delay: 0.9 }}
+                >
+                  {user.name}さん、今日は何を話そうか?
+                </motion.p>
+              </div>
             </div>
 
             <motion.button
@@ -477,7 +491,8 @@ export default function Home() {
               initial={ready ? { opacity: 0, y: 24 } : false}
               animate={ready ? { opacity: 1, y: 0 } : undefined}
               transition={{ duration: 0.8, ease: EASE, delay: 1.1 }}
-              whileHover={{ color: "#c8ff00" }}
+              whileHover={{ scale: 1.06, color: "#c8ff00", transition: SPRING }}
+              whileTap={{ scale: 0.97, transition: SPRING }}
             >
               <span className="font-mono text-xs tracking-[0.35em] text-white/50 uppercase transition-colors hover:text-[#c8ff00]">
                 対話を開始

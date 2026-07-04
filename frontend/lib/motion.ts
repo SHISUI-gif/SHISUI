@@ -9,3 +9,9 @@ export const DURATION = {
   fast: 0.2, // 小さなUI要素(ボタン、メッセージ1件など)
   base: 0.4, // ロゴ・見出しなど中サイズの要素
 } as const
+
+/**
+ * ホバー・タップ等、瞬発的なマイクロインタラクション専用のスプリング設定。
+ * EASEと同じ「サイト全体で1種類だけ」というルールをスプリングにも適用する。
+ */
+export const SPRING = { type: "spring", stiffness: 320, damping: 22 } as const

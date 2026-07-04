@@ -135,22 +135,22 @@ export function Sidebar({
                   <button
                     type="button"
                     onClick={() => {
-                      onOpenEvolutionProposals()
-                      onClose()
-                    }}
-                    className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
-                  >
-                    承認待ちの修正案
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
                       onOpenFeedbackReview()
                       onClose()
                     }}
                     className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
                   >
                     フィードバック確認
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenEvolutionProposals()
+                      onClose()
+                    }}
+                    className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
+                  >
+                    承認待ちの修正案
                   </button>
                 </>
               )}
