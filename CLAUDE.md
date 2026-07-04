@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `my-genspark` is 志粋(Shisui) — a fully local AI assistant built on Ollama (Qwen models), with one deliberate exception: the "夜間修行" (autonomous study loop) calls the Gemini API as an external "mentor." Every other feature runs with zero cloud dependency except Tavily (web search) and Gemini (study loop only, requires `GEMINI_API_KEY`).
 
-Two user-facing surfaces exist: `shisui_app.py` (Gradio, port 7860) and the FastAPI backend (`src/api/main.py`, port 8000, for the Next.js frontend in `frontend/`). **Both call the exact same brain** — `src/chat/shisui_chat.py:stream_shisui_events()`. Never duplicate chat logic across these two surfaces; extend `stream_shisui_events()` and let both frontends adapt its output.
+The production frontend is Next.js (`frontend/`) talking to the FastAPI backend (`src/api/main.py`, port 8000). `shisui_app.py` (Gradio, port 7860) was the original prototype UI — it still works and shares the exact same brain (`src/chat/shisui_chat.py:stream_shisui_events()`), but is retired from normal use and should NOT be run alongside FastAPI: both processes independently touch the same on-disk ChromaDB stores (`NEOCORTEX_DB_DIR`, `LITERARY_CHROMA_DIR`) via `PersistentClient`, which does not support concurrent multi-process access and throws intermittent `chromadb.errors.InternalError: ... Error finding id`. Only run one of the two at a time. Never duplicate chat logic across the two surfaces either way; extend `stream_shisui_events()` and let both frontends adapt its output.
 
 ## Commands
 

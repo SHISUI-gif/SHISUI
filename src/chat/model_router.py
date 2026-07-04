@@ -4,8 +4,15 @@
 瞬時に分類し、それぞれに適したモデル(コーディング特化・推論特化・軽量雑談用)を
 選ぶ。分類やモデル未取得などで失敗した場合は、既存の`settings.ollama_model`へ
 安全にフォールバックする(ルーティング機能がチャット全体を止めないようにする)。
+
+コーディング関連の質問は、分類LLMを呼ぶまでもなくキーワードだけで明白なことが
+多い(「コード」「エラー」等)。この場合はLLM呼び出し(3〜4秒)を丸ごと省略して
+即座にrouter_coding_modelへ振り分ける。キーワードに引っかからない場合のみ
+LLM分類にフォールバックする(REASONING/CHATの判定はキーワードでは難しいため)。
 """
 from __future__ import annotations
+
+import re
 
 import ollama
 
@@ -27,11 +34,20 @@ _CATEGORY_TO_SETTING = {
     "CHAT": "router_chat_model",
 }
 
+_CODING_KEYWORDS = re.compile(
+    r"コード|プログラム|関数|バグ|エラー|実装|デバッグ|スクリプト|リファクタ|設計|"
+    r"アーキテクチャ|API|バックエンド|フロントエンド|テスト|デプロイ",
+    re.IGNORECASE,
+)
+
 
 def route_model(user_query: str) -> str:
     """質問内容に応じたモデル名を返す。ルーティング無効時・失敗時はsettings.ollama_modelを返す。"""
     if not settings.model_router_enabled:
         return settings.ollama_model
+
+    if _CODING_KEYWORDS.search(user_query):
+        return settings.router_coding_model
 
     try:
         decision = ollama.chat(

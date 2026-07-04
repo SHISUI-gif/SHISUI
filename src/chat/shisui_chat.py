@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -76,6 +77,25 @@ def stream_shisui_events(user_message: str, history: list[dict]) -> Iterator[Cha
         )
 
 
+_MODEL_SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)b", re.IGNORECASE)
+_HEAVY_MODEL_PARAM_THRESHOLD = 20  # 億単位ではなくB(billion)単位のパラメータ数
+
+
+def _keep_alive_for(model: str) -> str:
+    """モデルサイズに応じてkeep_aliveを変える。
+
+    20B超級の重いモデル(qwen2.5:32b・qwen3-coder:30b等)は使用後すぐ解放しないと
+    メモリを圧迫してスワップを引き起こす(524タイムアウトの一因になっていた)ため
+    即座に解放する。8B前後の中量級モデルはメモリ負荷が軽いため、次の応答に
+    備えて短時間だけ常駐させておく方が(再ロードのコストを避けられて)有利。
+    サイズが読み取れないモデル名の場合は安全側(即解放)に倒す。
+    """
+    match = _MODEL_SIZE_PATTERN.search(model)
+    if match and float(match.group(1)) < _HEAVY_MODEL_PARAM_THRESHOLD:
+        return "1m"
+    return "0"
+
+
 def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[dict]:
     """think=Trueで応答をストリーミングし、対応していないモデルなら自動でthinkなしに切り替えて再試行する。
 
@@ -86,17 +106,16 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
     包む必要がある。モデルの能力チェックは生成開始前にサーバー側で行われるため、
     このエラーが起きる時点でチャンクは1つも返っていない(取りこぼしの心配はない)。
     """
-    # keep_aliveを短めにして、応答後すぐにこのモデルをメモリから解放する。
-    # ルーティング先は複数の大きいモデル(qwen2.5:32b等)を切り替えて使うため、
-    # 既定(5分)のまま複数モデルが同時に常駐し続けるとメモリを圧迫し、
-    # スワップが発生して応答が極端に遅くなる(524タイムアウトの一因になっていた)。
     # 常時使う軽量な分類モデル(_stream_shisui_events_inner内の並列呼び出し)は
-    # 対象外にして、そちらは既定のkeep_aliveのまま素早く再利用できるようにする。
+    # ここでのkeep_alive調整の対象外にして、既定のまま素早く再利用できるようにする。
+    keep_alive = _keep_alive_for(model)
     try:
-        yield from ollama.chat(model=model, messages=messages, stream=True, think=True, keep_alive="30s")
+        yield from ollama.chat(
+            model=model, messages=messages, stream=True, think=True, keep_alive=keep_alive
+        )
     except ollama.ResponseError as e:
         if e.status_code == 400 and "does not support thinking" in e.error:
-            yield from ollama.chat(model=model, messages=messages, stream=True, keep_alive="30s")
+            yield from ollama.chat(model=model, messages=messages, stream=True, keep_alive=keep_alive)
         else:
             raise
 

@@ -80,3 +80,17 @@ def test_route_model_falls_back_when_classifier_model_missing(monkeypatch):
     monkeypatch.setattr(ollama, "chat", _raise)
 
     assert model_router.route_model("何か質問") == "qwen2.5:32b"
+
+
+def test_route_model_coding_keyword_skips_classification_entirely(monkeypatch):
+    """明白にコーディング関連なキーワードがあれば、分類LLM呼び出し(3〜4秒)を
+    丸ごと省略して即座にrouter_coding_modelへ振り分ける。"""
+    monkeypatch.setattr(model_router, "settings", _fake_settings())
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("キーワードで即決できる場合はollama.chatが呼ばれてはいけない")
+
+    monkeypatch.setattr(ollama, "chat", _fail_if_called)
+
+    assert model_router.route_model("このバグを直して") == "qwen3-coder:30b"
+    assert model_router.route_model("認証周りのアーキテクチャを設計して") == "qwen3-coder:30b"

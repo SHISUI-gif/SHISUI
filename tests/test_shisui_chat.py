@@ -5,9 +5,25 @@
 モジュールテストで別途検証済み)。
 """
 import ollama
+import pytest
 
 from src.chat import shisui_chat
 from src.core import error_log
+
+
+@pytest.mark.parametrize(
+    "model,expected",
+    [
+        ("qwen2.5:32b", "0"),
+        ("qwen3-coder:30b", "0"),
+        ("deepseek-r1:8b", "1m"),
+        ("qwen3:8b", "1m"),
+        ("qwen3:1.7b", "1m"),
+        ("model-without-a-size", "0"),  # サイズ不明なら安全側(即解放)に倒す
+    ],
+)
+def test_keep_alive_for_by_model_size(model, expected):
+    assert shisui_chat._keep_alive_for(model) == expected
 
 
 def test_stream_shisui_reply_shows_thinking_when_present(monkeypatch):
