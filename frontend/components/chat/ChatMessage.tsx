@@ -24,14 +24,14 @@ export function ChatMessage({ message, isStreamingNow }: ChatMessageProps) {
 
   return (
     <motion.div
-      className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
+      className="flex w-full justify-start"
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       // ユーザー発言と志粋の発言は同時に配列へ追加されるため、志粋側にわずかな
       // delayを付けることで「ユーザー→志粋」の順で現れる段階的リビールにする
       transition={{ duration: DURATION.fast, ease: EASE, delay: isUser ? 0 : 0.1 }}
     >
-      <div className={cn("max-w-[85%] sm:max-w-[70%]", isUser ? "text-right" : "text-left")}>
+      <div className="max-w-[85%] text-left sm:max-w-[70%]">
         {/* 送信直後、thinking/contentのどちらもまだ届いていない空白期間の
             「止まっているわけではない」表示。最初の1バイトが届いた瞬間に消える。 */}
         {!isUser && isStreamingNow && !message.thinking && !message.content && <PendingPulse />}

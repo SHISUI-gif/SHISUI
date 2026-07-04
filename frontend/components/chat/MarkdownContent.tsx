@@ -1,10 +1,39 @@
 import ReactMarkdown from "react-markdown"
+import rehypeRaw from "rehype-raw"
 import remarkGfm from "remark-gfm"
 import { cn } from "@/lib/utils"
 
 interface MarkdownContentProps {
   content: string
   className?: string
+}
+
+// CommonMarkの強調記法は「**」の前後が句読点か通常文字かで開始/終了として
+// 認識されるかどうかが変わる(flanking rule)。日本語の「」の直後に
+// スペース無しで文字が続く「**「心の奥に響く」**もの」のようなケースは、
+// 閉じ「**」の前が句読点(」)・後ろが通常文字(も)になり「閉じ」の条件を
+// 満たさず、太字として解釈されずアスタリスクがそのまま表示されてしまう。
+// remarkのASTレベルの強調解析はこの規則を変更できないため、太字だけは
+// 先にHTMLの<strong>へ変換してから渡し、rehype-rawでHTMLとして解釈させる。
+//
+// ただしコードフェンス(```)・インラインコード(`)の中は絶対に触らない
+// (`**kwargs`や`2**10`のようなコード中のアスタリスクを太字化してしまうため)。
+function boldToStrong(text: string): string {
+  return text.replace(/\*\*([^*]+?)\*\*/g, "<strong>$1</strong>")
+}
+
+function convertBoldToRawHtml(content: string): string {
+  const codeSegmentPattern = /```[\s\S]*?```|`[^`]*`/g
+  let result = ""
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = codeSegmentPattern.exec(content)) !== null) {
+    result += boldToStrong(content.slice(lastIndex, match.index))
+    result += match[0]
+    lastIndex = match.index + match[0].length
+  }
+  result += boldToStrong(content.slice(lastIndex))
+  return result
 }
 
 /**
@@ -17,6 +46,7 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
     <div className={cn("text-sm leading-relaxed", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]}
         components={{
           p: ({ children }) => <p className="mb-2 last:mb-0 whitespace-pre-wrap">{children}</p>,
           strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
@@ -44,7 +74,7 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
           ),
         }}
       >
-        {content}
+        {convertBoldToRawHtml(content)}
       </ReactMarkdown>
     </div>
   )
