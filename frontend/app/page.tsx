@@ -421,7 +421,7 @@ export default function Home() {
             />
 
             <motion.header
-              className="shrink-0 px-6 pt-8 pb-4"
+              className="sticky top-0 z-30 shrink-0 bg-black px-6 pt-8 pb-4"
               initial={{ opacity: 0, y: -16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
