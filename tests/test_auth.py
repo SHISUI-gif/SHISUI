@@ -58,3 +58,47 @@ def test_get_user_id_for_token_returns_none_for_invalid_token(monkeypatch, tmp_p
     monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
 
     assert auth.get_user_id_for_token("存在しないトークン") is None
+
+
+def test_login_locks_out_after_too_many_failed_attempts(monkeypatch, tmp_path):
+    """総当たり対策: 同じ名前への失敗が閾値を超えたら、正しいパスワードでも弾く。"""
+    monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    auth.register("那由多", "hunter2")
+
+    for _ in range(auth._MAX_FAILED_ATTEMPTS):
+        result = auth.login("那由多", "間違ったパスワード")
+        assert result.success is False
+
+    locked_out = auth.login("那由多", "hunter2")  # 正しいパスワードでもロック中は失敗する
+
+    assert locked_out.success is False
+    assert "試行が多すぎます" in locked_out.error
+
+
+def test_login_lockout_is_scoped_per_name(monkeypatch, tmp_path):
+    """あるユーザーへの総当たりが、別のユーザーのログインを巻き込んでロックしないこと。"""
+    monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    auth.register("那由多", "hunter2")
+    auth.register("別のユーザー", "別のパスワード")
+
+    for _ in range(auth._MAX_FAILED_ATTEMPTS):
+        auth.login("那由多", "間違ったパスワード")
+
+    result = auth.login("別のユーザー", "別のパスワード")
+
+    assert result.success is True
+
+
+def test_successful_login_clears_failed_attempt_history(monkeypatch, tmp_path):
+    """ロック閾値未満の失敗の後に成功すれば、カウントはリセットされる。"""
+    monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    auth.register("那由多", "hunter2")
+
+    for _ in range(auth._MAX_FAILED_ATTEMPTS - 1):
+        auth.login("那由多", "間違ったパスワード")
+    assert auth.login("那由多", "hunter2").success is True
+
+    # リセットされているので、続けて数回失敗してもまだロックされない
+    for _ in range(auth._MAX_FAILED_ATTEMPTS - 1):
+        auth.login("那由多", "間違ったパスワード")
+    assert auth.login("那由多", "hunter2").success is True

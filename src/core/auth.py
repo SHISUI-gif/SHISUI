@@ -13,11 +13,17 @@ import hashlib
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config.settings import HIPPOCAMPUS_DB_PATH
 
 _PBKDF2_ITERATIONS = 260_000
+
+# 総当たり(ブルートフォース)対策: 同じ名前への失敗ログインが一定回数を超えたら
+# 一時的にロックする。トンネルURLを知っている・偶然踏んだ第三者が友達の
+# パスワードを機械的に試し続けられないようにするための最低限の防御。
+_MAX_FAILED_ATTEMPTS = 5
+_LOCKOUT_WINDOW_MINUTES = 15
 
 
 @dataclass
@@ -51,7 +57,36 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            name TEXT NOT NULL,
+            attempted_at TEXT NOT NULL
+        )
+        """
+    )
     return conn
+
+
+def _recent_failed_attempts(conn: sqlite3.Connection, name: str) -> int:
+    cutoff = (datetime.now() - timedelta(minutes=_LOCKOUT_WINDOW_MINUTES)).isoformat(
+        timespec="seconds"
+    )
+    row = conn.execute(
+        "SELECT COUNT(*) FROM login_attempts WHERE name = ? AND attempted_at >= ?", (name, cutoff)
+    ).fetchone()
+    return row[0]
+
+
+def _record_failed_attempt(conn: sqlite3.Connection, name: str) -> None:
+    conn.execute(
+        "INSERT INTO login_attempts (name, attempted_at) VALUES (?, ?)",
+        (name, datetime.now().isoformat(timespec="seconds")),
+    )
+
+
+def _clear_failed_attempts(conn: sqlite3.Connection, name: str) -> None:
+    conn.execute("DELETE FROM login_attempts WHERE name = ?", (name,))
 
 
 def _hash_password(password: str, salt: str) -> str:
@@ -93,20 +128,36 @@ def register(name: str, password: str) -> AuthResult:
 
 
 def login(name: str, password: str) -> AuthResult:
-    """既存ユーザーでログインする。名前が無い・パスワードが違えば失敗する。"""
+    """既存ユーザーでログインする。名前が無い・パスワードが違えば失敗する。
+
+    同じ名前への失敗が_LOCKOUT_WINDOW_MINUTES分以内に_MAX_FAILED_ATTEMPTS回を
+    超えていたら、パスワードの正誤に関わらずロックする(総当たり対策)。
+    """
     name = name.strip()
 
     with _connect() as conn:
+        if _recent_failed_attempts(conn, name) >= _MAX_FAILED_ATTEMPTS:
+            return AuthResult(
+                success=False,
+                error=(
+                    f"ログイン試行が多すぎます。{_LOCKOUT_WINDOW_MINUTES}分待ってから"
+                    "もう一度試してください。"
+                ),
+            )
+
         row = conn.execute(
             "SELECT id, password_hash, salt FROM users WHERE name = ?", (name,)
         ).fetchone()
         if row is None:
+            _record_failed_attempt(conn, name)
             return AuthResult(success=False, error="その名前のユーザーは見つかりませんでした。")
 
         user_id, stored_hash, salt = row
         if _hash_password(password, salt) != stored_hash:
+            _record_failed_attempt(conn, name)
             return AuthResult(success=False, error="パスワードが違います。")
 
+        _clear_failed_attempts(conn, name)
         token = _issue_session(conn, user_id)
 
     return AuthResult(success=True, user_id=user_id, name=name, token=token)
