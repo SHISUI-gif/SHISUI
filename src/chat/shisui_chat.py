@@ -86,11 +86,17 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
     包む必要がある。モデルの能力チェックは生成開始前にサーバー側で行われるため、
     このエラーが起きる時点でチャンクは1つも返っていない(取りこぼしの心配はない)。
     """
+    # keep_aliveを短めにして、応答後すぐにこのモデルをメモリから解放する。
+    # ルーティング先は複数の大きいモデル(qwen2.5:32b等)を切り替えて使うため、
+    # 既定(5分)のまま複数モデルが同時に常駐し続けるとメモリを圧迫し、
+    # スワップが発生して応答が極端に遅くなる(524タイムアウトの一因になっていた)。
+    # 常時使う軽量な分類モデル(_stream_shisui_events_inner内の並列呼び出し)は
+    # 対象外にして、そちらは既定のkeep_aliveのまま素早く再利用できるようにする。
     try:
-        yield from ollama.chat(model=model, messages=messages, stream=True, think=True)
+        yield from ollama.chat(model=model, messages=messages, stream=True, think=True, keep_alive="30s")
     except ollama.ResponseError as e:
         if e.status_code == 400 and "does not support thinking" in e.error:
-            yield from ollama.chat(model=model, messages=messages, stream=True)
+            yield from ollama.chat(model=model, messages=messages, stream=True, keep_alive="30s")
         else:
             raise
 

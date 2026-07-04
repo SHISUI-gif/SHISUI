@@ -11,7 +11,7 @@ from src.core import error_log
 
 
 def test_stream_shisui_reply_shows_thinking_when_present(monkeypatch):
-    def fake_chat(model, messages, tools=None, stream=False, think=None):
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
         if tools:
             return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
 
@@ -31,7 +31,7 @@ def test_stream_shisui_reply_shows_thinking_when_present(monkeypatch):
 
 
 def test_stream_shisui_reply_omits_thinking_block_when_absent(monkeypatch):
-    def fake_chat(model, messages, tools=None, stream=False, think=None):
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
         if tools:
             return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
 
@@ -59,7 +59,7 @@ def test_stream_shisui_reply_retries_without_think_when_model_unsupported(monkey
     この不具合を見逃してしまっていた)。"""
     calls = []
 
-    def fake_chat(model, messages, tools=None, stream=False, think=None):
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
         if not stream:
             # ツール判定呼び出し・model_routerの分類呼び出し(いずれもstream未指定)は
             # 通常の応答として素通しする
@@ -87,7 +87,7 @@ def test_stream_shisui_reply_reraises_other_response_errors(monkeypatch, tmp_pat
     # 本番のエラーログファイルを汚染しないよう必ず隔離する
     monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
 
-    def fake_chat(model, messages, tools=None, stream=False, think=None):
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
         if tools:
             return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
         raise ollama.ResponseError("model not found", status_code=404)
@@ -103,7 +103,7 @@ def test_stream_shisui_reply_logs_unexpected_errors(monkeypatch, tmp_path):
     """自己修復プロトコルが後で拾えるよう、未処理例外はerror_logにも記録される。"""
     monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
 
-    def fake_chat(model, messages, tools=None, stream=False, think=None):
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
         if tools:
             return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
         raise ollama.ResponseError("model not found", status_code=404)
