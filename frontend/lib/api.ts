@@ -8,17 +8,27 @@ import type { ChatMessage, ChatStreamEvent } from "./types"
  * next.config.tsのrewritesがサーバー側で解決するため、ブラウザがLAN経由・
  * 外部トンネル経由のどちらでアクセスしていても、フロントエンド側は
  * ホスト名を一切意識しなくてよい。
+ *
+ * conversationIdがnull(新しい会話)の場合、サーバー側が新規作成して
+ * 各イベントのconversation_idとして返してくる。呼び出し側はそれを拾って
+ * 以降のメッセージに使う。
  */
 export async function* streamChat(
   message: string,
   history: ChatMessage[],
+  token: string,
+  conversationId: number | null,
 ): AsyncGenerator<ChatStreamEvent> {
   const response = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
     body: JSON.stringify({
       message,
       history: history.map((m) => ({ role: m.role, content: m.content })),
+      conversation_id: conversationId,
     }),
   })
 

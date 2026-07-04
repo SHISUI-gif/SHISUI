@@ -2,12 +2,16 @@
 
 import { useEffect, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
+import { LoginForm } from "@/components/auth/LoginForm"
 import { ChatMessages } from "@/components/chat/ChatMessages"
 import { FloatingInput } from "@/components/chat/FloatingInput"
+import { Sidebar } from "@/components/chat/Sidebar"
 import { StartupLoader } from "@/components/StartupLoader"
 import { AmbientBackground } from "@/components/three/AmbientBackground"
+import { clearAuth, loadAuth, saveAuth } from "@/lib/auth"
 import { streamChat } from "@/lib/api"
-import type { ChatMessage } from "@/lib/types"
+import { getConversationMessages, listConversations } from "@/lib/conversations"
+import type { AuthUser, ChatMessage, Conversation } from "@/lib/types"
 import { EASE } from "@/lib/motion"
 
 const staggerContainer = {
@@ -62,6 +66,10 @@ function StaggeredText({
 }
 
 export default function Home() {
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [conversationId, setConversationId] = useState<number | null>(null)
+  const [conversationList, setConversationList] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | undefined>(undefined)
@@ -70,16 +78,60 @@ export default function Home() {
 
   useEffect(() => {
     setReady(true)
+    const existing = loadAuth()
+    if (existing) setUser(existing)
+    setAuthChecked(true)
   }, [])
 
+  useEffect(() => {
+    if (user) refreshConversations(user.token)
+  }, [user])
+
+  const refreshConversations = async (token: string) => {
+    setConversationList(await listConversations(token))
+  }
+
+  const handleAuthenticated = (authUser: AuthUser) => {
+    saveAuth(authUser)
+    setUser(authUser)
+  }
+
+  const handleLogout = () => {
+    clearAuth()
+    setUser(null)
+    setChatOpen(false)
+    setConversationId(null)
+    setConversationList([])
+    setMessages([])
+  }
+
+  const handleNewConversation = () => {
+    setConversationId(null)
+    setMessages([])
+    setChatOpen(true)
+  }
+
+  const handleSelectConversation = async (id: number) => {
+    if (!user) return
+    setConversationId(id)
+    setMessages(await getConversationMessages(user.token, id))
+    setChatOpen(true)
+  }
+
   const handleSend = async (text: string) => {
+    if (!user) return
     const userMessage: ChatMessage = { role: "user", content: text }
     setMessages((prev) => [...prev, userMessage, { role: "assistant", content: "", thinking: "" }])
     setIsStreaming(true)
     setToolStatus(undefined)
 
+    const isNewConversation = conversationId === null
+
     try {
-      for await (const event of streamChat(text, messages)) {
+      for await (const event of streamChat(text, messages, user.token, conversationId)) {
+        if (conversationId === null) {
+          setConversationId(event.conversation_id)
+        }
         if (event.type === "tool_status") {
           setToolStatus(event.text)
           continue
@@ -96,6 +148,9 @@ export default function Home() {
           return next
         })
       }
+      // 新しい会話ならサイドバーの一覧に追加、既存の会話ならタイトルの
+      // 更新日時が変わっているのでどちらの場合も一覧を再取得しておく
+      if (isNewConversation) refreshConversations(user.token)
     } catch (error) {
       setMessages((prev) => {
         const next = [...prev]
@@ -112,6 +167,14 @@ export default function Home() {
   }
 
   const hasMessages = messages.length > 0
+
+  if (!authChecked) {
+    return <div className="min-h-screen bg-black" />
+  }
+
+  if (!user) {
+    return <LoginForm onAuthenticated={handleAuthenticated} />
+  }
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-black">
@@ -210,42 +273,53 @@ export default function Home() {
         ) : (
           <motion.div
             key="chat"
-            className="flex min-h-screen flex-col"
+            className="flex min-h-screen"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.6, ease: EASE }}
           >
-            <motion.header
-              className="shrink-0 px-6 pt-8 pb-4"
-              initial={{ opacity: 0, y: -16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
-            >
-              <p className="font-[family-name:var(--font-syne)] text-lg font-bold tracking-tight text-white">
-                SHISUI
-              </p>
-              <motion.span
-                className="mt-1 block h-px w-10 origin-left bg-[#c8ff00]"
-                initial={{ scaleX: 0 }}
-                animate={{ scaleX: 1 }}
-                transition={{ duration: 0.5, ease: EASE, delay: 0.3 }}
-              />
-              <p className="mt-2 font-mono text-[10px] tracking-[0.3em] text-[#c8ff00]/70 uppercase">
-                Autonomous AI
-              </p>
-            </motion.header>
-
-            {hasMessages && (
-              <ChatMessages messages={messages} toolStatus={toolStatus} isStreaming={isStreaming} />
-            )}
-
-            {!hasMessages && <div className="flex-1" />}
-
-            <FloatingInput
-              onSend={handleSend}
-              disabled={isStreaming}
-              autoFocus
+            <Sidebar
+              userName={user.name}
+              conversations={conversationList}
+              activeConversationId={conversationId}
+              onSelectConversation={handleSelectConversation}
+              onNewConversation={handleNewConversation}
+              onLogout={handleLogout}
             />
+
+            <div className="flex min-h-screen flex-1 flex-col">
+              <motion.header
+                className="shrink-0 px-6 pt-8 pb-4"
+                initial={{ opacity: 0, y: -16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
+              >
+                <p className="font-[family-name:var(--font-syne)] text-lg font-bold tracking-tight text-white">
+                  SHISUI
+                </p>
+                <motion.span
+                  className="mt-1 block h-px w-10 origin-left bg-[#c8ff00]"
+                  initial={{ scaleX: 0 }}
+                  animate={{ scaleX: 1 }}
+                  transition={{ duration: 0.5, ease: EASE, delay: 0.3 }}
+                />
+                <p className="mt-2 font-mono text-[10px] tracking-[0.3em] text-[#c8ff00]/70 uppercase">
+                  Autonomous AI
+                </p>
+              </motion.header>
+
+              {hasMessages && (
+                <ChatMessages messages={messages} toolStatus={toolStatus} isStreaming={isStreaming} />
+              )}
+
+              {!hasMessages && <div className="flex-1" />}
+
+              <FloatingInput
+                onSend={handleSend}
+                disabled={isStreaming}
+                autoFocus
+              />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
