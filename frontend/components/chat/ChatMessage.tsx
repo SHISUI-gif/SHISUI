@@ -24,13 +24,17 @@ export function ChatMessage({ message, isStreamingNow }: ChatMessageProps) {
 
   return (
     <motion.div
-      className="flex w-full justify-start"
+      className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       // ユーザー発言と志粋の発言は同時に配列へ追加されるため、志粋側にわずかな
       // delayを付けることで「ユーザー→志粋」の順で現れる段階的リビールにする
       transition={{ duration: DURATION.fast, ease: EASE, delay: isUser ? 0 : 0.1 }}
     >
+      {/* 吹き出しの位置(ユーザーは右/志粋は左)は維持しつつ、吹き出し内の
+          テキスト自体は両者とも左揃え(text-left)にする。以前はユーザー側だけ
+          text-rightにしていたため、複数行に折り返すと各行の左端がガタガタに
+          揃わず「バラバラ」に見えていた。 */}
       <div className="max-w-[85%] text-left sm:max-w-[70%]">
         {/* 送信直後、thinking/contentのどちらもまだ届いていない空白期間の
             「止まっているわけではない」表示。最初の1バイトが届いた瞬間に消える。 */}
