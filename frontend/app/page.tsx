@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type TouchEvent, type WheelEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { LoginForm } from "@/components/auth/LoginForm"
 import { ChatMessages } from "@/components/chat/ChatMessages"
@@ -77,6 +77,31 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [ready, setReady] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const touchStartYRef = useRef<number | null>(null)
+
+  // ヒーロー画面を上にスワイプ(スマホ)または上にスクロール(トラックパッド/ホイール)
+  // するとチャットを開く。ボタンタップは引き続き従来通り使える。
+  const SWIPE_UP_THRESHOLD_PX = 60
+
+  const handleHeroTouchStart = (event: TouchEvent) => {
+    touchStartYRef.current = event.touches[0]?.clientY ?? null
+  }
+
+  const handleHeroTouchEnd = (event: TouchEvent) => {
+    const startY = touchStartYRef.current
+    touchStartYRef.current = null
+    if (startY === null) return
+    const endY = event.changedTouches[0]?.clientY ?? startY
+    if (startY - endY > SWIPE_UP_THRESHOLD_PX) {
+      setChatOpen(true)
+    }
+  }
+
+  const handleHeroWheel = (event: WheelEvent) => {
+    if (event.deltaY < -20) {
+      setChatOpen(true)
+    }
+  }
 
   useEffect(() => {
     setReady(true)
@@ -235,6 +260,9 @@ export default function Home() {
             className="relative flex min-h-screen flex-col items-center justify-center px-6"
             exit={{ opacity: 0, scale: 0.96 }}
             transition={{ duration: 0.7, ease: EASE }}
+            onTouchStart={handleHeroTouchStart}
+            onTouchEnd={handleHeroTouchEnd}
+            onWheel={handleHeroWheel}
           >
             {/* 常時ゆっくり動く3D背景。ヒーロー画面のみ、チャット画面には出さない */}
             <AmbientBackground />
