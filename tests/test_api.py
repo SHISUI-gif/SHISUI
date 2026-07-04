@@ -6,13 +6,14 @@
 import hashlib
 import threading
 import time
+from dataclasses import dataclass
 
 import ollama
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api import main
-from src.core import activity_log, auth
+from src.core import activity_log, auth, evolution, user_feedback
 from src.corpus import ingest as literary_ingest
 from src.memory import avatar, conversations, hippocampus, neocortex
 
@@ -22,16 +23,25 @@ def _fake_embeddings(model: str, prompt: str) -> dict:
     return {"embedding": [b / 255.0 for b in digest[:16]]}
 
 
+@dataclass
+class _FakeSettings:
+    owner_user_name: str = "那由多"
+
+
 @pytest.fixture(autouse=True)
 def _isolate_storage(tmp_path, monkeypatch):
     db_path = tmp_path / "hippocampus.sqlite3"
     monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", db_path)
+    monkeypatch.setattr(auth, "settings", _FakeSettings(owner_user_name="那由多"))
     monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", db_path)
     monkeypatch.setattr(conversations, "HIPPOCAMPUS_DB_PATH", db_path)
     monkeypatch.setattr(avatar, "HIPPOCAMPUS_DB_PATH", db_path)
     monkeypatch.setattr(neocortex, "NEOCORTEX_DB_DIR", tmp_path / "neocortex_chroma")
     monkeypatch.setattr(literary_ingest, "LITERARY_CHROMA_DIR", tmp_path / "literary_chroma")
     monkeypatch.setattr(activity_log, "ACTIVITY_LOG_FILE", tmp_path / "activity_log.json")
+    monkeypatch.setattr(evolution, "PENDING_PATCHES_DIR", tmp_path / "pending")
+    (tmp_path / "pending").mkdir()
+    monkeypatch.setattr(user_feedback, "USER_FEEDBACK_FILE", tmp_path / "user_feedback.json")
     monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
 
 
@@ -232,7 +242,7 @@ def test_avatar_returns_empty_for_new_user(client):
     response = client.get("/api/avatar", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 200
-    assert response.json() == {"unlocked_items": []}
+    assert response.json() == {"unlocked_items": [], "mood": None}
 
 
 def test_avatar_returns_unlocked_items_with_catalog_metadata(client):
@@ -263,6 +273,36 @@ def test_avatar_items_are_scoped_per_user(client):
 
     assert len(user1_avatar["unlocked_items"]) == 1
     assert user2_avatar["unlocked_items"] == []
+
+
+def test_avatar_response_includes_mood_field(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    body = register.json()
+    hippocampus.log_episode(
+        role="user", content="やったー!", source="chat", user_id=body["user_id"], emotion="HAPPY"
+    )
+
+    response = client.get("/api/avatar", headers={"Authorization": f"Bearer {body['token']}"})
+
+    assert response.json()["mood"] == "HAPPY"
+
+
+def test_avatar_mood_is_scoped_per_user(client):
+    user1 = client.post("/api/auth/register", json={"name": "ユーザー1", "password": "pw1"}).json()
+    user2 = client.post("/api/auth/register", json={"name": "ユーザー2", "password": "pw2"}).json()
+    hippocampus.log_episode(
+        role="user", content="不安だな", source="chat", user_id=user1["user_id"], emotion="ANXIOUS"
+    )
+
+    user1_avatar = client.get(
+        "/api/avatar", headers={"Authorization": f"Bearer {user1['token']}"}
+    ).json()
+    user2_avatar = client.get(
+        "/api/avatar", headers={"Authorization": f"Bearer {user2['token']}"}
+    ).json()
+
+    assert user1_avatar["mood"] == "ANXIOUS"
+    assert user2_avatar["mood"] is None
 
 
 def test_activity_requires_auth(client):
@@ -298,3 +338,177 @@ def test_activity_is_shared_across_users_not_scoped(client):
     ).json()
 
     assert user1_view == user2_view
+
+
+def test_get_me_requires_auth(client):
+    response = client.get("/api/auth/me")
+    assert response.status_code == 401
+
+
+def test_get_me_reports_owner_true_for_owner(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    body = register.json()
+
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['token']}"})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["name"] == "那由多"
+    assert result["is_owner"] is True
+
+
+def test_get_me_reports_owner_false_for_non_owner(client):
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    body = register.json()
+
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['token']}"})
+
+    assert response.json()["is_owner"] is False
+
+
+def test_feedback_submit_requires_auth(client):
+    response = client.post("/api/feedback", json={"content": "要望です"})
+    assert response.status_code == 401
+
+
+def test_feedback_submit_records_submitter_from_token_not_body(client):
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    token = register.json()["token"]
+
+    response = client.post(
+        "/api/feedback",
+        json={"content": "PDFも読めたら嬉しい"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    stored = user_feedback.get_all_feedback()
+    assert len(stored) == 1
+    assert stored[0]["user_name"] == "友達"
+    assert stored[0]["content"] == "PDFも読めたら嬉しい"
+
+
+def test_feedback_submit_rejects_empty_content(client):
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    token = register.json()["token"]
+
+    response = client.post(
+        "/api/feedback", json={"content": ""}, headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 422
+
+
+def test_feedback_list_rejects_non_owner(client):
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    token = register.json()["token"]
+
+    response = client.get("/api/feedback", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+
+
+def test_feedback_list_allows_owner(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+    user_feedback.submit_feedback(register.json()["user_id"], "那由多", "テスト要望")
+
+    response = client.get("/api/feedback", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+def test_feedback_dismiss_rejects_non_owner(client):
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    token = register.json()["token"]
+    record = user_feedback.submit_feedback(1, "友達", "テスト要望")
+
+    response = client.post(
+        f"/api/feedback/{record['id']}/dismiss", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 403
+
+
+def test_feedback_dismiss_allows_owner(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+    record = user_feedback.submit_feedback(1, "友達", "テスト要望")
+
+    response = client.post(
+        f"/api/feedback/{record['id']}/dismiss", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 200
+    assert user_feedback.get_all_feedback()[0]["reviewed"] is True
+
+
+def test_evolution_proposals_list_rejects_non_owner(client):
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    token = register.json()["token"]
+
+    response = client.get("/api/evolution/proposals", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+
+
+def test_evolution_proposals_list_allows_owner(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+    proposal = evolution.FixProposal(
+        id="abc123", error_id="err1", file_path="src/buggy.py", explanation="説明", diff="diff"
+    )
+    evolution._save_proposal(proposal)
+
+    response = client.get("/api/evolution/proposals", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["id"] == "abc123"
+
+
+def test_evolution_proposal_get_404_for_unknown_id(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+
+    response = client.get(
+        "/api/evolution/proposals/doesnotexist", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 404
+
+
+def test_evolution_proposal_apply_rejects_non_owner(client):
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    token = register.json()["token"]
+
+    response = client.post(
+        "/api/evolution/proposals/abc123/apply", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 403
+
+
+def test_evolution_proposal_apply_allows_owner_and_reports_result(client, monkeypatch):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+    monkeypatch.setattr(evolution, "apply_proposal", lambda pid: (True, f"適用しました: {pid}"))
+
+    response = client.post(
+        "/api/evolution/proposals/abc123/apply", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "message": "適用しました: abc123"}
+
+
+def test_evolution_proposal_reject_rejects_non_owner(client):
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    token = register.json()["token"]
+
+    response = client.post(
+        "/api/evolution/proposals/abc123/reject", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 403

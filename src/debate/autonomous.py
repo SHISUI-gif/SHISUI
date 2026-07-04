@@ -71,9 +71,18 @@ def run_autonomous_debate(llm: OllamaClient | None = None) -> AutonomousDebateRe
         session_topics.append({"topic": topic, "insight": summary, "memory_id": memory_id})
 
     study_report.append_session(session_topics)
+    conclusion_preview = "、".join(
+        f"「{t.topic}」→{t.conclusion_summary[:80]}" for t in result.topics_debated[:2]
+    )
+    summary = f"自律討論: {len(result.topics_debated)}件のトピックについて議論した"
+    if conclusion_preview:
+        summary += f"({conclusion_preview})"
     activity_log.log_activity(
         kind="debate",
-        summary=f"自律討論: {len(result.topics_debated)}件のトピックについて議論した",
-        details={"topics": [t.topic for t in result.topics_debated]},
+        summary=summary,
+        details={
+            "topics": [t.topic for t in result.topics_debated],
+            "conclusions": [t.conclusion_summary for t in result.topics_debated],
+        },
     )
     return result

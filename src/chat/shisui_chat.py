@@ -20,6 +20,7 @@ from datetime import datetime
 import ollama
 
 from config.settings import settings
+from src.chat import emotion
 from src.chat.model_router import route_model
 from src.common import groq_client
 from src.common.persona import SHISUI_SYSTEM_PROMPT
@@ -204,19 +205,25 @@ def _stream_shisui_events_inner(
     # する。以前はこの2つのembedding呼び出しが直列で、その後のツール判定との
     # 並列化ブロックに入る前に完了を待つ必要があったため、合計の待ち時間に
     # そのまま乗っていた。
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         recall_future = executor.submit(memory_context.build_recall_context, user_message, user_id=user_id)
         literary_future = executor.submit(literary_context.build_literary_hint, user_message)
         model_future = executor.submit(route_model, user_message)
+        emotion_future = executor.submit(emotion.detect_emotion, user_message)
         recall_context = recall_future.result()
         literary_hint = literary_future.result()
         model = model_future.result()
+        emotion_category = emotion_future.result()
 
     if recall_context:
         system_content += "\n\n" + recall_context
 
     if literary_hint:
         system_content += "\n\n" + literary_hint
+
+    tone_hint = emotion.tone_hint_for(emotion_category)
+    if tone_hint:
+        system_content += "\n\n" + tone_hint
 
     unread_study_report = study_report.get_unread_report()
     if unread_study_report:
@@ -228,7 +235,12 @@ def _stream_shisui_events_inner(
     messages.append({"role": "user", "content": user_message})
 
     hippocampus.log_episode(
-        role="user", content=user_message, source="chat", user_id=user_id, conversation_id=conversation_id
+        role="user",
+        content=user_message,
+        source="chat",
+        user_id=user_id,
+        conversation_id=conversation_id,
+        emotion=emotion_category,
     )
 
     # ツール判定は振り分け先の大きいモデル(qwen2.5:32b等)ではなく軽量な分類モデルを使う

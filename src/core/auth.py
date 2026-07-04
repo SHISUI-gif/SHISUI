@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from config.settings import HIPPOCAMPUS_DB_PATH
+from config.settings import HIPPOCAMPUS_DB_PATH, settings
 
 _PBKDF2_ITERATIONS = 260_000
 
@@ -168,3 +168,20 @@ def get_user_id_for_token(token: str) -> int | None:
     with _connect() as conn:
         row = conn.execute("SELECT user_id FROM sessions WHERE token = ?", (token,)).fetchone()
     return row[0] if row else None
+
+
+def get_user_name(user_id: int) -> str | None:
+    """user_idに対応するユーザー名を返す。存在しなければNoneを返す。"""
+    with _connect() as conn:
+        row = conn.execute("SELECT name FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row[0] if row else None
+
+
+def is_owner(user_id: int) -> bool:
+    """user_idがsettings.owner_user_nameに一致するユーザーかどうかを返す。
+
+    自己修復提案の承認やフィードバック一覧の閲覧など、那由多さんだけが
+    行える操作を区別するための唯一の判定。users.idは登録順に依存する
+    自動採番のため、安定した識別子としてnameを採用している。
+    """
+    return get_user_name(user_id) == settings.owner_user_name

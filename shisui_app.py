@@ -1,13 +1,15 @@
 import threading
+import time
 
 import gradio as gr
 from gradio.themes.utils import colors, fonts
 
+from config.settings import settings
 from src.chat.shisui_chat import stream_shisui_reply
-from src.corpus.scheduler import maybe_run_daily_archive_crawl
-from src.debate.scheduler import maybe_run_daily_debate_autonomous
-from src.memory.scheduler import maybe_run_daily_sleep
-from src.study.scheduler import maybe_run_daily_study
+from src.corpus.scheduler import maybe_run_nightly_archive_crawl
+from src.debate.scheduler import maybe_run_nightly_debate_autonomous
+from src.memory.scheduler import maybe_run_nightly_sleep
+from src.study.scheduler import maybe_run_nightly_study
 
 
 def chat_with_shisui(user_message, history):
@@ -91,16 +93,25 @@ with gr.Blocks(title="自律型AI - 志粋 -") as demo:
         textbox=gr.Textbox(placeholder="志粋にメッセージを送る...", container=False, scale=7),
     )
 
+def _nightly_scheduler_loop() -> None:
+    """夜間帯(既定23:00〜翌6:30)の間、記憶圧縮・青空文庫クロール・夜間修行・
+    自律討論を順番にチェックし続ける永続ループ(src/api/main.pyと同じ仕組み)。
+    """
+    while True:
+        try:
+            maybe_run_nightly_sleep()
+            maybe_run_nightly_archive_crawl()
+            maybe_run_nightly_study()
+            maybe_run_nightly_debate_autonomous()
+        except Exception as exc:  # noqa: BLE001
+            print(f"夜間スケジューラの巡回でエラー(継続します): {exc}")
+        time.sleep(settings.night_mode_check_interval_seconds)
+
+
 if __name__ == "__main__":
-    # 記憶圧縮システム・青空文庫全体クロールは、ネットワークI/O(礼儀正しい待機)や
-    # LLM呼び出しで数十秒〜数分かかることがあるため、Gradio起動をブロックしないよう
-    # バックグラウンドスレッドで実行する(daemon=Trueなのでアプリ終了時に自動で片付く)
-    threading.Thread(target=maybe_run_daily_sleep, daemon=True).start()
-    threading.Thread(target=maybe_run_daily_archive_crawl, daemon=True).start()
-    # 夜間修行・自律討論はlaunchd(launchctl load)の有効化を保留しているため、
-    # launchdなしでも1日1回動くよう、他の日次ジョブと同じ仕組みに乗せる
-    threading.Thread(target=maybe_run_daily_study, daemon=True).start()
-    threading.Thread(target=maybe_run_daily_debate_autonomous, daemon=True).start()
+    # Gradio起動をブロックしないよう、バックグラウンドスレッドで永続的に
+    # チェックし続ける(daemon=Trueなのでアプリ終了時に自動で片付く)
+    threading.Thread(target=_nightly_scheduler_loop, daemon=True).start()
 
     # ⚠️ 超重要:server_name="0.0.0.0" にすることで、同じWi-Fiにいる家族のiPhoneからアクセス可能になるよ!
     # share=True にすると、Tailscaleを使わなくても一時的な外部URL(72時間有効)を自動発行してくれるから、最初はこれも便利!

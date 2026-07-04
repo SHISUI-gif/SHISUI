@@ -9,20 +9,25 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from rich.console import Console
 
+from config.settings import settings
 from src.chat.shisui_chat import stream_shisui_events
-from src.core import activity_log, auth
-from src.corpus.scheduler import maybe_run_daily_archive_crawl
-from src.debate.scheduler import maybe_run_daily_debate_autonomous
-from src.memory import avatar, conversations
+from src.core import activity_log, auth, evolution, user_feedback
+from src.corpus.scheduler import maybe_run_nightly_archive_crawl
+from src.debate.scheduler import maybe_run_nightly_debate_autonomous
+from src.memory import avatar, conversations, hippocampus
 from src.memory.avatar_catalog import AVATAR_CATALOG
-from src.memory.scheduler import maybe_run_daily_sleep
-from src.study.scheduler import maybe_run_daily_study
+from src.memory.scheduler import maybe_run_nightly_sleep
+from src.study.scheduler import maybe_run_nightly_study
+
+console = Console()
 
 # OllamaのllamaserverはモデルごとにOLLAMA_NUM_PARALLEL=1(-np 1)で動いており、
 # 実質「同時に1人分しか生成できない」。複数人が同時にメッセージを送ると、
@@ -36,15 +41,31 @@ _QUEUE_POLL_SECONDS = 5
 app = FastAPI(title="志粋 API")
 
 
+def _nightly_scheduler_loop() -> None:
+    """夜間帯(既定23:00〜翌6:30)の間、記憶圧縮・青空文庫クロール・夜間修行・
+    自律討論を順番にチェックし続ける永続ループ。
+
+    以前は「アプリ起動時に1回だけ」チェックしていたため、サーバーを再起動
+    せずに何日も動かし続けると2日目以降トリガーされなくなるバグがあった。
+    定期的にチェックし直すことで、サーバーを再起動しなくても夜間帯の開始を
+    取りこぼさないようにする。
+    """
+    while True:
+        try:
+            maybe_run_nightly_sleep()
+            maybe_run_nightly_archive_crawl()
+            maybe_run_nightly_study()
+            maybe_run_nightly_debate_autonomous()
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]夜間スケジューラの巡回でエラー(継続します): {exc}[/yellow]")
+        time.sleep(settings.night_mode_check_interval_seconds)
+
+
 @app.on_event("startup")
-def _start_daily_schedulers() -> None:
-    # Gradio版(shisui_app.py)と同じ「アプリ起動時に1日1回」の仕組み。
+def _start_nightly_scheduler() -> None:
     # Next.jsフロントエンド経由(このFastAPIだけ)で使う場合でも、記憶圧縮・
     # 青空文庫クロール・夜間修行・自律討論が自動で動くようにする。
-    threading.Thread(target=maybe_run_daily_sleep, daemon=True).start()
-    threading.Thread(target=maybe_run_daily_archive_crawl, daemon=True).start()
-    threading.Thread(target=maybe_run_daily_study, daemon=True).start()
-    threading.Thread(target=maybe_run_daily_debate_autonomous, daemon=True).start()
+    threading.Thread(target=_nightly_scheduler_loop, daemon=True).start()
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,6 +94,10 @@ class AuthRequest(BaseModel):
     password: str
 
 
+class UserFeedbackRequest(BaseModel):
+    content: str = Field(min_length=1)
+
+
 def _require_user_id(authorization: str | None) -> int:
     """`Authorization: Bearer <token>`ヘッダーからuser_idを取り出す。無効なら401を返す。"""
     if not authorization or not authorization.startswith("Bearer "):
@@ -81,6 +106,15 @@ def _require_user_id(authorization: str | None) -> int:
     user_id = auth.get_user_id_for_token(token)
     if user_id is None:
         raise HTTPException(status_code=401, detail="セッションが無効です。再ログインしてください。")
+    return user_id
+
+
+def _require_owner(authorization: str | None) -> int:
+    """オーナー(那由多さん)以外なら403を返す。自己修復提案の承認・フィードバック
+    一覧の閲覧など、オーナー専用の操作にだけ使う。"""
+    user_id = _require_user_id(authorization)
+    if not auth.is_owner(user_id):
+        raise HTTPException(status_code=403, detail="この操作はオーナーのみ実行できます。")
     return user_id
 
 
@@ -108,6 +142,20 @@ def login(request: AuthRequest) -> dict:
     return {"token": result.token, "user_id": result.user_id, "name": result.name}
 
 
+@app.get("/api/auth/me")
+def get_me(authorization: str | None = Header(None)) -> dict:
+    """ログイン中のユーザー自身の情報とオーナー判定を返す。
+
+    ログイン/登録レスポンス(AuthUser)はフロント側でlocalStorageに長期間
+    キャッシュされるため、そこにis_ownerを混ぜるとOWNER_USER_NAME変更時に
+    再ログインするまで古い判定が残ってしまう。そのため専用のエンドポイントに
+    切り出し、フロントは毎回ここへ問い合わせてオーナー判定を得る。
+    """
+    user_id = _require_user_id(authorization)
+    name = auth.get_user_name(user_id) or ""
+    return {"user_id": user_id, "name": name, "is_owner": auth.is_owner(user_id)}
+
+
 @app.get("/api/conversations")
 def list_conversations(authorization: str | None = Header(None)) -> list[dict]:
     """ログイン中のユーザー自身の会話スレッドを、直近に更新された順で一覧する。"""
@@ -130,19 +178,28 @@ def get_conversation_messages(
 
 @app.get("/api/avatar")
 def get_avatar(authorization: str | None = Header(None)) -> dict:
-    """ログイン中のユーザーが解除済みのアバターアイテム一覧を返す。
+    """ログイン中のユーザーが解除済みの全身コーデ一覧と、直近の気分傾向を返す。
 
     カタログ(表示名・アセットファイル名)ごと返すことで、フロント側が
     src/memory/avatar_catalog.pyの内容を二重管理しなくて済むようにする。
+    配列の並び順は解除日時の昇順(avatar.get_unlocked_slugsの順序どおり)なので、
+    フロント側は最後の要素を「一番新しく解除したコーデ」として扱える。
+    moodは直近の会話から検知した感情の傾向(hippocampus.get_recent_mood参照)で、
+    データが無ければnull。
     """
     user_id = _require_user_id(authorization)
-    unlocked_slugs = set(avatar.get_unlocked_slugs(user_id))
+    catalog_by_slug = {item.slug: item for item in AVATAR_CATALOG}
     unlocked_items = [
-        {"slug": item.slug, "display_name": item.display_name, "asset": item.asset}
-        for item in AVATAR_CATALOG
-        if item.slug in unlocked_slugs
+        {
+            "slug": slug,
+            "display_name": catalog_by_slug[slug].display_name,
+            "asset": catalog_by_slug[slug].asset,
+        }
+        for slug in avatar.get_unlocked_slugs(user_id)
+        if slug in catalog_by_slug
     ]
-    return {"unlocked_items": unlocked_items}
+    mood = hippocampus.get_recent_mood(user_id)
+    return {"unlocked_items": unlocked_items, "mood": mood}
 
 
 @app.get("/api/activity")
@@ -154,6 +211,71 @@ def get_activity(authorization: str | None = Header(None)) -> dict:
     """
     _require_user_id(authorization)
     return {"activities": activity_log.get_recent_activity()}
+
+
+@app.get("/api/evolution/proposals")
+def list_evolution_proposals(authorization: str | None = Header(None)) -> list[dict]:
+    """承認待ちの自己修復提案を一覧する。オーナーのみ。"""
+    _require_owner(authorization)
+    return evolution.list_pending_proposals()
+
+
+@app.get("/api/evolution/proposals/{proposal_id}")
+def get_evolution_proposal(proposal_id: str, authorization: str | None = Header(None)) -> dict:
+    """自己修復提案の詳細を返す。オーナーのみ。"""
+    _require_owner(authorization)
+    proposal = evolution.get_proposal(proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="修正案が見つかりません。")
+    return proposal
+
+
+@app.post("/api/evolution/proposals/{proposal_id}/apply")
+def apply_evolution_proposal(proposal_id: str, authorization: str | None = Header(None)) -> dict:
+    """自己修復提案を適用する(git apply + commit)。オーナーのみ。
+
+    apply_proposal()は「作業ツリーが汚れている」等の想定内の失敗を(bool, str)の
+    タプルで返す設計になっているため、そのままok/messageとして返す(500にはしない)。
+    """
+    _require_owner(authorization)
+    ok, message = evolution.apply_proposal(proposal_id)
+    return {"ok": ok, "message": message}
+
+
+@app.post("/api/evolution/proposals/{proposal_id}/reject")
+def reject_evolution_proposal(proposal_id: str, authorization: str | None = Header(None)) -> dict:
+    """自己修復提案を却下する。オーナーのみ。"""
+    _require_owner(authorization)
+    return {"ok": evolution.reject_proposal(proposal_id)}
+
+
+@app.post("/api/feedback")
+def submit_user_feedback(
+    request: UserFeedbackRequest, authorization: str | None = Header(None)
+) -> dict:
+    """要望・フィードバックを送信する。ログイン中なら誰でも送信できる。
+
+    user_id/user_nameは認証トークンから取得したものだけを使い、リクエスト
+    ボディの値は一切信用しない(他人になりすませないようにするため)。
+    """
+    user_id = _require_user_id(authorization)
+    user_name = auth.get_user_name(user_id) or ""
+    return user_feedback.submit_feedback(user_id, user_name, request.content)
+
+
+@app.get("/api/feedback")
+def list_user_feedback(authorization: str | None = Header(None)) -> list[dict]:
+    """送信された要望・フィードバックの一覧(新しい順)を返す。オーナーのみ。"""
+    _require_owner(authorization)
+    return user_feedback.get_all_feedback()
+
+
+@app.post("/api/feedback/{feedback_id}/dismiss")
+def dismiss_user_feedback(feedback_id: str, authorization: str | None = Header(None)) -> dict:
+    """要望・フィードバックを既読にする。オーナーのみ。"""
+    _require_owner(authorization)
+    user_feedback.mark_reviewed(feedback_id)
+    return {"ok": True}
 
 
 @app.post("/api/chat")

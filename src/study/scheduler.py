@@ -1,26 +1,26 @@
 """夜間修行(Autonomous Study Loop)の自動トリガー。
 
-src/memory/scheduler.pyと全く同じ考え方: 真のOSアイドル検知やlaunchdでの
-スケジューリングの代わりに、「1日に1回、アプリ起動時にまだ実行していなければ
-実行する」という形で近似する。launchdの有効化(launchctl load)は那由多さんの
-確認なしには行わない方針のため、これがGEMINI_API_KEY設定済み環境で夜間修行を
-実際に動かす唯一の経路になる。
+src/memory/scheduler.pyと同じ考え方: 「夜眠っている間だけ学習している」という
+コンセプトに合わせ、夜間帯(既定23:00〜翌6:30、src/core/night_schedule.py参照)の
+間だけ実行する。launchdの有効化(launchctl load)は那由多さんの確認なしには
+行わない方針のため、これがGEMINI_API_KEY設定済み環境で夜間修行を実際に動かす
+唯一の経路になる。
 """
 from __future__ import annotations
-
-from datetime import date
 
 from rich.console import Console
 
 from config.settings import STUDY_MARKER_FILE
+from src.core import night_schedule
 from src.study.study_session import run_study_session
 
 console = Console()
 
 
-def maybe_run_daily_study() -> None:
-    """今日まだ夜間修行を実行していなければ実行し、マーカーファイルを更新する。
+def maybe_run_nightly_study() -> None:
+    """今夜まだ夜間修行を実行していなければ実行し、マーカーファイルを更新する。
 
+    夜間帯(既定23:00〜翌6:30)の外であれば何もしない。
     Gradio(shisui_app.py)とFastAPI(src/api/main.py)を両方起動していると、
     ほぼ同時に両方のプロセスがこの関数を呼ぶため、「マーカーを確認してから
     実行し、完了後に書き込む」だけでは間に合わず二重実行してしまう
@@ -28,16 +28,18 @@ def maybe_run_daily_study() -> None:
     チャット応答が止まった)。マーカーを排他的(exclusive)に先に確保することで、
     先着した1プロセスだけが実行するようにする。
     """
-    today = date.today().isoformat()
+    night_key = night_schedule.current_night_key()
+    if night_key is None:
+        return
 
     if STUDY_MARKER_FILE.exists():
-        if STUDY_MARKER_FILE.read_text(encoding="utf-8").strip() == today:
+        if STUDY_MARKER_FILE.read_text(encoding="utf-8").strip() == night_key:
             return
         STUDY_MARKER_FILE.unlink()
 
     try:
         with open(STUDY_MARKER_FILE, "x", encoding="utf-8") as f:
-            f.write(today)
+            f.write(night_key)
     except FileExistsError:
         return  # 別プロセスがこの瞬間に既に確保した
 

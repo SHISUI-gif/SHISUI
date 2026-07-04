@@ -101,10 +101,17 @@ def run_study_session(
         result.gemini_calls += settings.study_dialogue_turns
 
     _save_session_log(result)
+    insight_preview = "、".join(t.insight for t in result.topics_studied[:3])
+    summary = f"夜間修行: {len(result.topics_studied)}件のトピックを学んだ"
+    if insight_preview:
+        summary += f"(気づき: {insight_preview})"
     activity_log.log_activity(
         kind="study",
-        summary=f"夜間修行: {len(result.topics_studied)}件のトピックを学んだ",
-        details={"topics": [t.topic for t in result.topics_studied]},
+        summary=summary,
+        details={
+            "topics": [t.topic for t in result.topics_studied],
+            "insights": [t.insight for t in result.topics_studied],
+        },
     )
     return result
 

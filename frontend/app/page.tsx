@@ -6,16 +6,30 @@ import { AvatarDisplay } from "@/components/AvatarDisplay"
 import { LoginForm } from "@/components/auth/LoginForm"
 import { ActivityLog } from "@/components/chat/ActivityLog"
 import { ChatMessages } from "@/components/chat/ChatMessages"
+import { EvolutionProposals } from "@/components/chat/EvolutionProposals"
+import { FeedbackForm } from "@/components/chat/FeedbackForm"
+import { FeedbackReview } from "@/components/chat/FeedbackReview"
 import { FloatingInput } from "@/components/chat/FloatingInput"
 import { Sidebar } from "@/components/chat/Sidebar"
 import { StartupLoader } from "@/components/StartupLoader"
 import { AmbientBackground } from "@/components/three/AmbientBackground"
-import { clearAuth, loadAuth, saveAuth } from "@/lib/auth"
+import { clearAuth, loadAuth, saveAuth, getCurrentUser } from "@/lib/auth"
 import { AuthError, streamChat } from "@/lib/api"
 import { getRecentActivity } from "@/lib/activity"
 import { getAvatarState } from "@/lib/avatar"
 import { getConversationMessages, listConversations } from "@/lib/conversations"
-import type { ActivityEntry, AuthUser, AvatarItem, ChatMessage, Conversation } from "@/lib/types"
+import { applyProposal, getPendingProposals, rejectProposal } from "@/lib/evolution"
+import { dismissFeedback, getAllFeedback, submitFeedback } from "@/lib/userFeedback"
+import type {
+  ActivityEntry,
+  AuthUser,
+  AvatarItem,
+  ChatMessage,
+  Conversation,
+  CurrentUser,
+  EvolutionProposal,
+  UserFeedbackEntry,
+} from "@/lib/types"
 import { EASE } from "@/lib/motion"
 
 const staggerContainer = {
@@ -79,8 +93,15 @@ export default function Home() {
   const [chatOpen, setChatOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [avatarItems, setAvatarItems] = useState<AvatarItem[]>([])
+  const [mood, setMood] = useState<string | null>(null)
   const [activityLogOpen, setActivityLogOpen] = useState(false)
   const [activities, setActivities] = useState<ActivityEntry[]>([])
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
+  const [evolutionOpen, setEvolutionOpen] = useState(false)
+  const [proposals, setProposals] = useState<EvolutionProposal[]>([])
+  const [feedbackFormOpen, setFeedbackFormOpen] = useState(false)
+  const [feedbackReviewOpen, setFeedbackReviewOpen] = useState(false)
+  const [feedbackEntries, setFeedbackEntries] = useState<UserFeedbackEntry[]>([])
   const [ready, setReady] = useState(false)
   // 生成中でも次のメッセージを送れるようにするため、単一のAbortController
   // ではなく「今動いている全リクエスト」をSetで管理する。Stopは動いている
@@ -128,7 +149,19 @@ export default function Home() {
   useEffect(() => {
     if (!user) return
     getAvatarState(user.token)
-      .then(setAvatarItems)
+      .then((state) => {
+        setAvatarItems(state.unlockedItems)
+        setMood(state.mood)
+      })
+      .catch((error) => {
+        if (error instanceof AuthError) handleLogout()
+      })
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    getCurrentUser(user.token)
+      .then(setCurrentUser)
       .catch((error) => {
         if (error instanceof AuthError) handleLogout()
       })
@@ -150,6 +183,7 @@ export default function Home() {
   const handleLogout = () => {
     clearAuth()
     setUser(null)
+    setCurrentUser(null)
     setChatOpen(false)
     conversationIdRef.current = null
     setConversationId(null)
@@ -169,6 +203,67 @@ export default function Home() {
     try {
       setActivities(await getRecentActivity(user.token))
       setActivityLogOpen(true)
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
+  }
+
+  const handleOpenEvolutionProposals = async () => {
+    if (!user) return
+    try {
+      setProposals(await getPendingProposals(user.token))
+      setEvolutionOpen(true)
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
+  }
+
+  const handleApplyProposal = async (id: string) => {
+    if (!user) return
+    try {
+      await applyProposal(user.token, id)
+      setProposals((prev) => prev.filter((p) => p.id !== id))
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
+  }
+
+  const handleRejectProposal = async (id: string) => {
+    if (!user) return
+    try {
+      await rejectProposal(user.token, id)
+      setProposals((prev) => prev.filter((p) => p.id !== id))
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
+  }
+
+  const handleSubmitFeedback = async (content: string) => {
+    if (!user) return
+    try {
+      await submitFeedback(user.token, content)
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
+  }
+
+  const handleOpenFeedbackReview = async () => {
+    if (!user) return
+    try {
+      setFeedbackEntries(await getAllFeedback(user.token))
+      setFeedbackReviewOpen(true)
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
+  }
+
+  const handleDismissFeedback = async (id: string) => {
+    if (!user) return
+    try {
+      await dismissFeedback(user.token, id)
+      setFeedbackEntries((prev) =>
+        prev.map((entry) => (entry.id === id ? { ...entry, reviewed: true } : entry)),
+      )
     } catch (error) {
       if (error instanceof AuthError) handleLogout()
     }
@@ -364,7 +459,7 @@ export default function Home() {
             </motion.span>
 
             <div className="relative z-10 mt-8 flex flex-col items-center gap-4 px-6">
-              <AvatarDisplay unlockedItems={avatarItems} />
+              <AvatarDisplay unlockedItems={avatarItems} mood={mood} />
               <motion.p
                 className="text-center font-mono text-sm text-white/50 sm:text-base"
                 initial={ready ? { opacity: 0, y: 16 } : false}
@@ -407,17 +502,39 @@ export default function Home() {
               isOpen={sidebarOpen}
               onClose={() => setSidebarOpen(false)}
               userName={user.name}
+              isOwner={currentUser?.isOwner ?? false}
               conversations={conversationList}
               activeConversationId={conversationId}
               onSelectConversation={handleSelectConversation}
               onNewConversation={handleNewConversation}
               onOpenActivityLog={handleOpenActivityLog}
+              onOpenEvolutionProposals={handleOpenEvolutionProposals}
+              onOpenFeedbackForm={() => setFeedbackFormOpen(true)}
+              onOpenFeedbackReview={handleOpenFeedbackReview}
               onLogout={handleLogout}
             />
             <ActivityLog
               isOpen={activityLogOpen}
               onClose={() => setActivityLogOpen(false)}
               activities={activities}
+            />
+            <EvolutionProposals
+              isOpen={evolutionOpen}
+              onClose={() => setEvolutionOpen(false)}
+              proposals={proposals}
+              onApply={handleApplyProposal}
+              onReject={handleRejectProposal}
+            />
+            <FeedbackForm
+              isOpen={feedbackFormOpen}
+              onClose={() => setFeedbackFormOpen(false)}
+              onSubmit={handleSubmitFeedback}
+            />
+            <FeedbackReview
+              isOpen={feedbackReviewOpen}
+              onClose={() => setFeedbackReviewOpen(false)}
+              entries={feedbackEntries}
+              onDismiss={handleDismissFeedback}
             />
 
             <motion.header
@@ -426,16 +543,26 @@ export default function Home() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
             >
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(true)}
-                aria-label="会話履歴を開く"
-                className="group mb-3 flex flex-col gap-1.5 p-1 -m-1"
-              >
-                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
-                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
-                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
-              </button>
+              <div className="mb-3 flex items-start justify-between">
+                <button
+                  type="button"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="会話履歴を開く"
+                  className="group flex flex-col gap-1.5 p-1 -m-1"
+                >
+                  <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
+                  <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
+                  <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChatOpen(false)}
+                  aria-label="ホームに戻る"
+                  className="font-mono text-[10px] uppercase tracking-widest text-white/40 transition-colors hover:text-[#c8ff00]"
+                >
+                  ホーム
+                </button>
+              </div>
               <p className="font-[family-name:var(--font-syne)] text-lg font-bold tracking-tight text-white">
                 SHISUI
               </p>

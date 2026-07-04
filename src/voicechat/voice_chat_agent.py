@@ -19,10 +19,10 @@ from rich.console import Console
 from src.common.llm_client import OllamaClient
 from src.common.persona import SHISUI_SYSTEM_PROMPT, VOICE_SYSTEM_PROMPT_ADDENDUM
 from src.corpus import context as literary_context
-from src.corpus.scheduler import maybe_run_daily_archive_crawl
+from src.corpus.scheduler import maybe_run_nightly_archive_crawl
 from src.memory import context as memory_context
 from src.memory import hippocampus
-from src.memory.scheduler import maybe_run_daily_sleep
+from src.memory.scheduler import maybe_run_nightly_sleep
 from src.minutes.transcriber import Transcriber
 from src.study import report as study_report
 from src.voicechat.audio_io import record_until_enter
@@ -103,8 +103,8 @@ class VoiceChatAgent:
     def run_loop(self) -> None:
         """終了ワードが発話されるかCtrl+Cが押されるまで対話を繰り返す。"""
         # ネットワークI/Oやモデル呼び出しで数分かかることがあるため、会話開始をブロックしない
-        threading.Thread(target=maybe_run_daily_sleep, daemon=True).start()
-        threading.Thread(target=maybe_run_daily_archive_crawl, daemon=True).start()
+        threading.Thread(target=maybe_run_nightly_sleep, daemon=True).start()
+        threading.Thread(target=maybe_run_nightly_archive_crawl, daemon=True).start()
         console.print(
             "[bold cyan]音声会話モードを開始します[/bold cyan]。"
             f"「{ '/'.join(sorted(EXIT_WORDS)) }」のいずれかを話すと終了します。(Ctrl+Cでも終了)"

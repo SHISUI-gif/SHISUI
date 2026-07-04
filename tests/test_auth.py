@@ -1,5 +1,12 @@
 """ユーザー登録・ログイン・セッション(src/core/auth.py)を検証する。"""
+from dataclasses import dataclass
+
 from src.core import auth
+
+
+@dataclass
+class _FakeSettings:
+    owner_user_name: str = "那由多"
 
 
 def test_register_creates_user_and_session(monkeypatch, tmp_path):
@@ -102,3 +109,39 @@ def test_successful_login_clears_failed_attempt_history(monkeypatch, tmp_path):
     for _ in range(auth._MAX_FAILED_ATTEMPTS - 1):
         auth.login("那由多", "間違ったパスワード")
     assert auth.login("那由多", "hunter2").success is True
+
+
+def test_get_user_name_returns_name_for_existing_user(monkeypatch, tmp_path):
+    monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    registered = auth.register("那由多", "hunter2")
+
+    assert auth.get_user_name(registered.user_id) == "那由多"
+
+
+def test_get_user_name_returns_none_for_unknown_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+
+    assert auth.get_user_name(9999) is None
+
+
+def test_is_owner_true_for_configured_owner_name(monkeypatch, tmp_path):
+    monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    monkeypatch.setattr(auth, "settings", _FakeSettings(owner_user_name="那由多"))
+    registered = auth.register("那由多", "hunter2")
+
+    assert auth.is_owner(registered.user_id) is True
+
+
+def test_is_owner_false_for_non_owner_name(monkeypatch, tmp_path):
+    monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    monkeypatch.setattr(auth, "settings", _FakeSettings(owner_user_name="那由多"))
+    registered = auth.register("友達", "pw")
+
+    assert auth.is_owner(registered.user_id) is False
+
+
+def test_is_owner_false_for_nonexistent_user_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    monkeypatch.setattr(auth, "settings", _FakeSettings(owner_user_name="那由多"))
+
+    assert auth.is_owner(9999) is False

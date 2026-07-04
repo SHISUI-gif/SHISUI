@@ -1,9 +1,12 @@
-"""育つアバターの解除可能アイテム一覧。
+"""育つアバターの解除可能な全身コーデ一覧。
 
 夜間睡眠サイクル(src/memory/sleep.py)が、その日の会話テーマを踏まえて
-ここに定義したtheme_hintを手がかりにどのアイテムを解除するかLLMに判定させる。
-実際のイラスト素材が用意でき次第、assetフィールド(frontend/public/avatar/配下の
-ファイル名)を差し替えるだけで見た目を更新できる。
+ここに定義したtheme_hintを手がかりにどのコーデを解除するかLLMに判定させる。
+assetは小物の重ね着ではなく、そのコーデを着た志粋の全身イラストそのものを指す
+(同じキャラクターの一貫性を保つため、Higgsfield等でSoul ID的な手法を使い
+ベースキャラクターから生成する想定)。実際のイラスト素材が用意でき次第、
+assetフィールド(frontend/public/avatar/配下のファイル名)を差し替えるだけで
+見た目を更新できる。
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ class AvatarItem:
     slug: str
     display_name: str
     theme_hint: str  # LLM判定プロンプトで「どんな会話なら解除すべきか」を説明する
-    asset: str  # frontend/public/avatar/配下のファイル名
+    asset: str  # frontend/public/avatar/配下のファイル名(そのコーデの全身画像)
 
 
 AVATAR_CATALOG: list[AvatarItem] = [

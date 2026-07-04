@@ -30,6 +30,7 @@ AOZORA_ARCHIVE_MARKER_FILE = CORPUS_DIR / "last_archive_crawl_date.txt"
 EVOLUTION_DIR = BASE_DIR / "output" / "evolution"
 ERROR_LOG_FILE = EVOLUTION_DIR / "error_log.json"
 FEEDBACK_LOG_FILE = EVOLUTION_DIR / "feedback_log.json"
+USER_FEEDBACK_FILE = EVOLUTION_DIR / "user_feedback.json"
 PENDING_PATCHES_DIR = EVOLUTION_DIR / "pending"
 STUDY_MARKER_FILE = STUDY_DIR / "last_study_date.txt"
 DEBATE_AUTONOMOUS_MARKER_FILE = DEBATE_DIR / "last_autonomous_debate_date.txt"
@@ -87,6 +88,10 @@ class Settings:
     router_reasoning_model: str = os.getenv("ROUTER_REASONING_MODEL", "deepseek-r1:8b")
     router_chat_model: str = os.getenv("ROUTER_CHAT_MODEL", "qwen3:8b")
 
+    # 感情トーン検知(ユーザーの発言の感情を分類し、志粋の返答トーンに反映する)。
+    # 分類モデルはROUTER_CLASSIFIER_MODEL(またはGroq利用時はGROQ_CLASSIFIER_MODEL)を共用する。
+    emotion_detection_enabled: bool = os.getenv("EMOTION_DETECTION_ENABLED", "true").lower() == "true"
+
     # 自己修復プロトコル(エラー検知→修正案生成→人間承認)。
     # コーディング特化のローカルモデルを使い、外部API(Gemini)には出さない。
     evolution_enabled: bool = os.getenv("EVOLUTION_ENABLED", "true").lower() == "true"
@@ -107,6 +112,17 @@ class Settings:
     groq_coding_model: str = os.getenv("GROQ_CODING_MODEL", "qwen/qwen3-32b")
     groq_reasoning_model: str = os.getenv("GROQ_REASONING_MODEL", "qwen/qwen3-32b")
     groq_chat_model: str = os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3-32b")
+
+    # 夜間トリガー(睡眠・自律学習・自律討論を「夜眠っている間」だけ動かす)
+    night_mode_start_hour: int = int(os.getenv("NIGHT_MODE_START_HOUR", "23"))
+    night_mode_end_hour: int = int(os.getenv("NIGHT_MODE_END_HOUR", "6"))
+    night_mode_end_minute: int = int(os.getenv("NIGHT_MODE_END_MINUTE", "30"))
+    night_mode_check_interval_seconds: int = int(
+        os.getenv("NIGHT_MODE_CHECK_INTERVAL_SECONDS", "600")
+    )
+
+    # オーナー権限(那由多さんだけが操作できる機能を区別するための識別子)
+    owner_user_name: str = os.getenv("OWNER_USER_NAME", "那由多")
 
 
 settings = Settings()

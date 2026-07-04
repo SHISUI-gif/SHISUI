@@ -9,11 +9,15 @@ interface SidebarProps {
   isOpen: boolean
   onClose: () => void
   userName: string
+  isOwner: boolean
   conversations: Conversation[]
   activeConversationId: number | null
   onSelectConversation: (id: number) => void
   onNewConversation: () => void
   onOpenActivityLog: () => void
+  onOpenEvolutionProposals: () => void
+  onOpenFeedbackForm: () => void
+  onOpenFeedbackReview: () => void
   onLogout: () => void
 }
 
@@ -31,11 +35,15 @@ export function Sidebar({
   isOpen,
   onClose,
   userName,
+  isOwner,
   conversations,
   activeConversationId,
   onSelectConversation,
   onNewConversation,
   onOpenActivityLog,
+  onOpenEvolutionProposals,
+  onOpenFeedbackForm,
+  onOpenFeedbackReview,
   onLogout,
 }: SidebarProps) {
   return (
@@ -109,6 +117,43 @@ export function Sidebar({
               >
                 活動ログ
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenFeedbackForm()
+                  onClose()
+                }}
+                className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
+              >
+                要望・フィードバックを送る
+              </button>
+              {isOwner && (
+                <>
+                  <p className="mb-3 font-mono text-[9px] uppercase tracking-widest text-white/25">
+                    オーナー
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenEvolutionProposals()
+                      onClose()
+                    }}
+                    className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
+                  >
+                    承認待ちの修正案
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenFeedbackReview()
+                      onClose()
+                    }}
+                    className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
+                  >
+                    フィードバック確認
+                  </button>
+                </>
+              )}
               <p className="truncate font-mono text-xs text-white/40">{userName}</p>
               <button
                 type="button"

@@ -12,6 +12,7 @@ user_id・conversation_idは、友達それぞれの会話を混ぜない/覗き
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -28,6 +29,7 @@ class Episode:
     consolidated: bool
     user_id: int | None = None
     conversation_id: int | None = None
+    emotion: str | None = None
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
@@ -53,6 +55,7 @@ def _connect() -> sqlite3.Connection:
     # 既存DBには無い列なので、無ければ後から追加する(マイグレーション)
     _ensure_column(conn, "episodes", "user_id", "INTEGER")
     _ensure_column(conn, "episodes", "conversation_id", "INTEGER")
+    _ensure_column(conn, "episodes", "emotion", "TEXT")
     return conn
 
 
@@ -63,14 +66,19 @@ def log_episode(
     user_id: int | None = None,
     conversation_id: int | None = None,
     timestamp: str | None = None,
+    emotion: str | None = None,
 ) -> int:
-    """1発話分のエピソードを海馬に記録し、挿入した行のidを返す。"""
+    """1発話分のエピソードを海馬に記録し、挿入した行のidを返す。
+
+    emotionはsrc/chat/emotion.pyが分類したユーザー発言の感情ラベル(例: "ANXIOUS")。
+    アシスタント側の発言には付けない想定(呼び出し側でNoneのまま渡す)。
+    """
     timestamp = timestamp or datetime.now().isoformat(timespec="seconds")
     with _connect() as conn:
         cursor = conn.execute(
-            "INSERT INTO episodes (timestamp, role, content, source, user_id, conversation_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (timestamp, role, content, source, user_id, conversation_id),
+            "INSERT INTO episodes (timestamp, role, content, source, user_id, conversation_id, emotion) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (timestamp, role, content, source, user_id, conversation_id, emotion),
         )
         return cursor.lastrowid
 
@@ -79,7 +87,7 @@ def get_unconsolidated_episodes() -> list[Episode]:
     """まだ新皮質へ統合されていないエピソードを古い順で返す。"""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, timestamp, role, content, source, consolidated, user_id, conversation_id "
+            "SELECT id, timestamp, role, content, source, consolidated, user_id, conversation_id, emotion "
             "FROM episodes WHERE consolidated = 0 ORDER BY id ASC"
         ).fetchall()
     return [
@@ -92,9 +100,35 @@ def get_unconsolidated_episodes() -> list[Episode]:
             consolidated=bool(r[5]),
             user_id=r[6],
             conversation_id=r[7],
+            emotion=r[8],
         )
         for r in rows
     ]
+
+
+def get_recent_mood(user_id: int, limit: int = 5) -> str | None:
+    """直近limit件のユーザー発言の感情ラベルから、最も多いものを返す(同数なら新しい方を優先)。
+
+    夜間の睡眠サイクルとは違い、会話のたびに都度計算する(「今の空気」を反映するため)。
+    該当データが無ければNoneを返す。
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT emotion FROM episodes "
+            "WHERE user_id = ? AND role = 'user' AND emotion IS NOT NULL "
+            "ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    emotions = [row[0] for row in rows]
+    if not emotions:
+        return None
+    counts = Counter(emotions)
+    max_count = max(counts.values())
+    # 同数の場合は直近(emotionsの先頭に近い方)を優先する
+    for emotion in emotions:
+        if counts[emotion] == max_count:
+            return emotion
+    return None
 
 
 def mark_consolidated(episode_ids: list[int]) -> None:

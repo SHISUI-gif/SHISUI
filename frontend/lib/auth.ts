@@ -1,4 +1,5 @@
-import type { AuthUser } from "./types"
+import { AuthError } from "./api"
+import type { AuthUser, CurrentUser } from "./types"
 
 const STORAGE_KEY = "shisui_auth"
 
@@ -47,4 +48,20 @@ export function register(name: string, password: string): Promise<AuthUser> {
 
 export function login(name: string, password: string): Promise<AuthUser> {
   return postAuth("login", name, password)
+}
+
+/**
+ * オーナー判定(is_owner)は、ログイン/登録レスポンスと違ってlocalStorageに
+ * キャッシュしない。OWNER_USER_NAMEが変わった場合に古い判定が残らないよう、
+ * 毎回このエンドポイントに問い合わせる。
+ */
+export async function getCurrentUser(token: string): Promise<CurrentUser> {
+  const response = await fetch("/api/auth/me", {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (response.status === 401) {
+    throw new AuthError("セッションが切れました。もう一度ログインしてください。")
+  }
+  const body = await response.json()
+  return { userId: body.user_id, name: body.name, isOwner: body.is_owner }
 }

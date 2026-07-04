@@ -61,3 +61,85 @@ def test_migration_adds_columns_to_pre_existing_db(monkeypatch, tmp_path):
     assert episodes[0].user_id is None
     assert episodes[1].content == "移行後のデータ"
     assert episodes[1].user_id == 1
+
+
+def test_log_episode_stores_emotion(monkeypatch, tmp_path):
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+
+    hippocampus.log_episode(role="user", content="不安だな", source="chat", user_id=1, emotion="ANXIOUS")
+
+    episodes = hippocampus.get_unconsolidated_episodes()
+    assert episodes[0].emotion == "ANXIOUS"
+
+
+def test_log_episode_defaults_emotion_to_none(monkeypatch, tmp_path):
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+
+    hippocampus.log_episode(role="assistant", content="了解!", source="chat", user_id=1)
+
+    episodes = hippocampus.get_unconsolidated_episodes()
+    assert episodes[0].emotion is None
+
+
+def test_migration_adds_emotion_column_to_pre_existing_db(monkeypatch, tmp_path):
+    """emotion列が無い(移行前の)DBファイルにも後から列が追加される。"""
+    import sqlite3
+
+    db_path = tmp_path / "hippocampus.sqlite3"
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE episodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL,
+            consolidated INTEGER NOT NULL DEFAULT 0,
+            user_id INTEGER,
+            conversation_id INTEGER
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO episodes (timestamp, role, content, source, user_id) VALUES (?, ?, ?, ?, ?)",
+        ("2026-01-01T00:00:00", "user", "移行前のデータ", "chat", 1),
+    )
+    conn.commit()
+    conn.close()
+
+    hippocampus.log_episode(role="user", content="移行後のデータ", source="chat", user_id=1, emotion="HAPPY")
+
+    episodes = hippocampus.get_unconsolidated_episodes()
+    assert len(episodes) == 2
+    assert episodes[0].emotion is None
+    assert episodes[1].emotion == "HAPPY"
+
+
+def test_get_recent_mood_returns_most_frequent_of_last_n_episodes(monkeypatch, tmp_path):
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+
+    for e in ["ANXIOUS", "ANXIOUS", "HAPPY"]:
+        hippocampus.log_episode(role="user", content="発言", source="chat", user_id=1, emotion=e)
+
+    assert hippocampus.get_recent_mood(1) == "ANXIOUS"
+
+
+def test_get_recent_mood_returns_none_when_no_emotion_data(monkeypatch, tmp_path):
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+
+    hippocampus.log_episode(role="user", content="発言", source="chat", user_id=1)
+
+    assert hippocampus.get_recent_mood(1) is None
+
+
+def test_get_recent_mood_is_scoped_per_user(monkeypatch, tmp_path):
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+
+    hippocampus.log_episode(role="user", content="発言1", source="chat", user_id=1, emotion="SAD")
+    hippocampus.log_episode(role="user", content="発言2", source="chat", user_id=2, emotion="HAPPY")
+
+    assert hippocampus.get_recent_mood(1) == "SAD"
+    assert hippocampus.get_recent_mood(2) == "HAPPY"

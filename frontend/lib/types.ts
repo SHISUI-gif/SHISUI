@@ -36,9 +36,37 @@ export interface AvatarItem {
   asset: string;
 }
 
+export interface AvatarState {
+  unlockedItems: AvatarItem[];
+  mood: string | null;
+}
+
 export interface ActivityEntry {
   timestamp: string;
   kind: "sleep" | "study" | "debate";
   summary: string;
   details: Record<string, unknown>;
+}
+
+export interface CurrentUser {
+  userId: number;
+  name: string;
+  isOwner: boolean;
+}
+
+export interface EvolutionProposal {
+  id: string;
+  error_id: string;
+  file_path: string;
+  explanation: string;
+  diff: string;
+}
+
+export interface UserFeedbackEntry {
+  id: string;
+  timestamp: string;
+  user_id: number;
+  user_name: string;
+  content: string;
+  reviewed: boolean;
 }
