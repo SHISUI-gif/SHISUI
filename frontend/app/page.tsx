@@ -74,6 +74,7 @@ export default function Home() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | undefined>(undefined)
   const [chatOpen, setChatOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -273,12 +274,14 @@ export default function Home() {
         ) : (
           <motion.div
             key="chat"
-            className="flex min-h-screen"
+            className="flex min-h-screen flex-col"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.6, ease: EASE }}
           >
             <Sidebar
+              isOpen={sidebarOpen}
+              onClose={() => setSidebarOpen(false)}
               userName={user.name}
               conversations={conversationList}
               activeConversationId={conversationId}
@@ -287,39 +290,47 @@ export default function Home() {
               onLogout={handleLogout}
             />
 
-            <div className="flex min-h-screen flex-1 flex-col">
-              <motion.header
-                className="shrink-0 px-6 pt-8 pb-4"
-                initial={{ opacity: 0, y: -16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
+            <motion.header
+              className="shrink-0 px-6 pt-8 pb-4"
+              initial={{ opacity: 0, y: -16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
+            >
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="会話履歴を開く"
+                className="group mb-3 flex flex-col gap-1.5 p-1 -m-1"
               >
-                <p className="font-[family-name:var(--font-syne)] text-lg font-bold tracking-tight text-white">
-                  SHISUI
-                </p>
-                <motion.span
-                  className="mt-1 block h-px w-10 origin-left bg-[#c8ff00]"
-                  initial={{ scaleX: 0 }}
-                  animate={{ scaleX: 1 }}
-                  transition={{ duration: 0.5, ease: EASE, delay: 0.3 }}
-                />
-                <p className="mt-2 font-mono text-[10px] tracking-[0.3em] text-[#c8ff00]/70 uppercase">
-                  Autonomous AI
-                </p>
-              </motion.header>
-
-              {hasMessages && (
-                <ChatMessages messages={messages} toolStatus={toolStatus} isStreaming={isStreaming} />
-              )}
-
-              {!hasMessages && <div className="flex-1" />}
-
-              <FloatingInput
-                onSend={handleSend}
-                disabled={isStreaming}
-                autoFocus
+                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
+                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
+                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
+              </button>
+              <p className="font-[family-name:var(--font-syne)] text-lg font-bold tracking-tight text-white">
+                SHISUI
+              </p>
+              <motion.span
+                className="mt-1 block h-px w-10 origin-left bg-[#c8ff00]"
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: 1 }}
+                transition={{ duration: 0.5, ease: EASE, delay: 0.3 }}
               />
-            </div>
+              <p className="mt-2 font-mono text-[10px] tracking-[0.3em] text-[#c8ff00]/70 uppercase">
+                Autonomous AI
+              </p>
+            </motion.header>
+
+            {hasMessages && (
+              <ChatMessages messages={messages} toolStatus={toolStatus} isStreaming={isStreaming} />
+            )}
+
+            {!hasMessages && <div className="flex-1" />}
+
+            <FloatingInput
+              onSend={handleSend}
+              disabled={isStreaming}
+              autoFocus
+            />
           </motion.div>
         )}
       </AnimatePresence>
