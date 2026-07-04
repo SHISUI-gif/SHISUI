@@ -94,8 +94,16 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault()
       handleSend()
+      return
     }
-    // 通常のEnter(修飾キーなし)は改行として素通しする(送信しない)
+    if (event.key === "Enter" && value.endsWith("\n")) {
+      // 直前のEnterで既に改行が入っている状態でもう一度Enter
+      // (=空行でEnter、いわゆる「改行2回」)を送信のトリガーにする
+      event.preventDefault()
+      handleSend()
+      return
+    }
+    // それ以外の通常のEnter(1回目)は改行として素通しする(送信しない)
   }
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -202,7 +210,7 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="志粋にメッセージを送る... (Cmd/Ctrl+Enterで送信)"
+            placeholder="志粋にメッセージを送る... (Cmd/Ctrl+Enter、またはEnter2回で送信)"
             disabled={isStreaming}
             rows={1}
             className={cn(
