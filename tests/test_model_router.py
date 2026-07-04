@@ -20,6 +20,11 @@ def _fake_settings(**overrides):
         router_reasoning_model="deepseek-r1:8b",
         router_chat_model="qwen3:7b",
         ollama_model="qwen2.5:32b",
+        use_groq=False,
+        groq_classifier_model="llama-3.1-8b-instant",
+        groq_coding_model="qwen/qwen3-32b",
+        groq_reasoning_model="qwen/qwen3-32b",
+        groq_chat_model="qwen/qwen3-32b",
     )
     base.update(overrides)
     return types.SimpleNamespace(**base)
@@ -94,3 +99,27 @@ def test_route_model_coding_keyword_skips_classification_entirely(monkeypatch):
 
     assert model_router.route_model("このバグを直して") == "qwen3-coder:30b"
     assert model_router.route_model("認証周りのアーキテクチャを設計して") == "qwen3-coder:30b"
+
+
+def test_route_model_uses_groq_client_and_models_when_use_groq(monkeypatch):
+    """use_groq有効時は、ローカルOllamaではなくGroqクライアント・Groq側のモデル名を使う。"""
+    monkeypatch.setattr(model_router, "settings", _fake_settings(use_groq=True))
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("use_groq有効時はollama.chatが呼ばれてはいけない")
+
+    monkeypatch.setattr(ollama, "chat", _fail_if_called)
+    monkeypatch.setattr(model_router.groq_client, "chat", _fake_chat("CODING"))
+
+    assert model_router.route_model("自由意志について考察して") == "qwen/qwen3-32b"
+
+
+def test_route_model_groq_fallback_on_error(monkeypatch):
+    monkeypatch.setattr(model_router, "settings", _fake_settings(use_groq=True))
+
+    def _raise(*args, **kwargs):
+        raise Exception("Groq APIエラー")
+
+    monkeypatch.setattr(model_router.groq_client, "chat", _raise)
+
+    assert model_router.route_model("何か質問") == "qwen/qwen3-32b"

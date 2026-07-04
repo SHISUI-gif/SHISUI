@@ -17,6 +17,7 @@ import re
 import ollama
 
 from config.settings import settings
+from src.common import groq_client
 
 CLASSIFICATION_PROMPT = """\
 以下の質問を分析し、最適なモデルを選択せよ。
@@ -33,6 +34,11 @@ _CATEGORY_TO_SETTING = {
     "REASONING": "router_reasoning_model",
     "CHAT": "router_chat_model",
 }
+_CATEGORY_TO_GROQ_SETTING = {
+    "CODING": "groq_coding_model",
+    "REASONING": "groq_reasoning_model",
+    "CHAT": "groq_chat_model",
+}
 
 _CODING_KEYWORDS = re.compile(
     r"コード|プログラム|関数|バグ|エラー|実装|デバッグ|スクリプト|リファクタ|設計|"
@@ -42,23 +48,33 @@ _CODING_KEYWORDS = re.compile(
 
 
 def route_model(user_query: str) -> str:
-    """質問内容に応じたモデル名を返す。ルーティング無効時・失敗時はsettings.ollama_modelを返す。"""
+    """質問内容に応じたモデル名を返す。ルーティング無効時・失敗時はフォールバックモデルを返す。
+
+    settings.use_groqがtrueの場合、ローカルOllamaではなくGroqの無料枠APIで分類し、
+    Groq側のモデル名を返す(Macの蓋を閉じても動けるクラウド移行の選択肢、
+    config/settings.py参照)。
+    """
+    client = groq_client if settings.use_groq else ollama
+    classifier_model = settings.groq_classifier_model if settings.use_groq else settings.router_classifier_model
+    category_to_setting = _CATEGORY_TO_GROQ_SETTING if settings.use_groq else _CATEGORY_TO_SETTING
+    fallback_model = settings.groq_chat_model if settings.use_groq else settings.ollama_model
+
     if not settings.model_router_enabled:
-        return settings.ollama_model
+        return fallback_model
 
     if _CODING_KEYWORDS.search(user_query):
-        return settings.router_coding_model
+        return settings.groq_coding_model if settings.use_groq else settings.router_coding_model
 
     try:
-        decision = ollama.chat(
-            model=settings.router_classifier_model,
+        decision = client.chat(
+            model=classifier_model,
             messages=[{"role": "user", "content": CLASSIFICATION_PROMPT.format(query=user_query)}],
         )
         category = decision["message"]["content"].strip().upper()
-        setting_name = _CATEGORY_TO_SETTING.get(category)
+        setting_name = category_to_setting.get(category)
         if setting_name is None:
-            return settings.ollama_model
+            return fallback_model
         return getattr(settings, setting_name)
     except Exception:  # noqa: BLE001
-        # 分類モデル未取得・Ollama未起動などで失敗しても、通常の応答生成は止めない
-        return settings.ollama_model
+        # 分類モデル未取得・Ollama未起動・Groq APIエラー等で失敗しても、通常の応答生成は止めない
+        return fallback_model

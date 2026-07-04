@@ -21,6 +21,7 @@ import ollama
 
 from config.settings import settings
 from src.chat.model_router import route_model
+from src.common import groq_client
 from src.common.persona import SHISUI_SYSTEM_PROMPT
 from src.common.tools import ALL_TOOL_SCHEMAS, AVAILABLE_TOOLS
 from src.core import error_log
@@ -111,7 +112,14 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
     そのため呼び出しだけでなく、forループでのイテレーションもtry/exceptで
     包む必要がある。モデルの能力チェックは生成開始前にサーバー側で行われるため、
     このエラーが起きる時点でチャンクは1つも返っていない(取りこぼしの心配はない)。
+
+    Groq経由(settings.use_groq)の場合は、そもそもthink/keep_aliveの概念が無いため
+    このフォールバック処理自体が不要で、素直にストリーミングするだけでよい。
     """
+    if settings.use_groq:
+        yield from groq_client.chat(model=model, messages=messages, stream=True)
+        return
+
     # 常時使う軽量な分類モデル(_stream_shisui_events_inner内の並列呼び出し)は
     # ここでのkeep_alive調整の対象外にして、既定のまま素早く再利用できるようにする。
     keep_alive = _keep_alive_for(model)
@@ -226,8 +234,10 @@ def _stream_shisui_events_inner(
     # ツール判定は振り分け先の大きいモデル(qwen2.5:32b等)ではなく軽量な分類モデルを使う
     # (応答が全く届かない時間が長引くと、Cloudflareトンネル経由で524タイムアウトになるため)。
     # messagesの構築(=記憶検索の結果)に依存するため、上の並列バッチには含められない。
-    first_response = ollama.chat(
-        model=settings.router_classifier_model,
+    tool_client = groq_client if settings.use_groq else ollama
+    tool_model = settings.groq_classifier_model if settings.use_groq else settings.router_classifier_model
+    first_response = tool_client.chat(
+        model=tool_model,
         messages=messages,
         tools=ALL_TOOL_SCHEMAS,
     )
