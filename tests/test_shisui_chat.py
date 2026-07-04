@@ -189,6 +189,43 @@ def test_stream_shisui_reply_logs_correction_feedback(monkeypatch, tmp_path):
     assert unreviewed[0]["correction_message"] == "それ違うよ、今は2026年だよ"
 
 
+def test_stream_shisui_reply_reflects_correction_immediately_via_neocortex(monkeypatch, tmp_path):
+    """訂正は翌日の睡眠モードを待たず、次のターンから即座に思い出せる必要がある
+    (「決めつけないで」と言われた直後に繰り返す、という事故を防ぐための要件)。"""
+    monkeypatch.setattr(feedback_log, "FEEDBACK_LOG_FILE", tmp_path / "feedback_log.json")
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+
+        def gen():
+            yield {"message": {"content": "ごめんね、気をつけるよ。"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    history = [
+        {"role": "user", "content": "最近文学の話ばかりしてるね"},
+        {"role": "assistant", "content": "文学がお好きなんですね!"},
+    ]
+    list(
+        shisui_chat.stream_shisui_reply(
+            "そこまで好きではないな、決めつけるの気をつけて", history, user_id=42
+        )
+    )
+
+    memories = neocortex.list_all(user_id=42)
+    correction_memories = [m for m in memories if m.category == "correction"]
+    assert len(correction_memories) == 1
+    assert "決めつける" in correction_memories[0].text
+
+    recall = shisui_chat.memory_context.build_recall_context(
+        "最近どう?", user_id=42
+    )
+    assert "決めつける" in recall
+
+
 def test_stream_shisui_reply_does_not_log_feedback_for_normal_messages(monkeypatch, tmp_path):
     monkeypatch.setattr(feedback_log, "FEEDBACK_LOG_FILE", tmp_path / "feedback_log.json")
 

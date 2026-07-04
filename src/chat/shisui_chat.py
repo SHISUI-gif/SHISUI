@@ -27,7 +27,7 @@ from src.core import error_log
 from src.core import feedback_log
 from src.corpus import context as literary_context
 from src.memory import context as memory_context
-from src.memory import hippocampus
+from src.memory import hippocampus, neocortex
 from src.study import report as study_report
 
 
@@ -126,15 +126,22 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
             raise
 
 
-def _maybe_log_correction_feedback(user_message: str, history: list[dict]) -> None:
-    """ユーザーの発言が直前の志粋の返答への訂正・不満らしければ、feedback_logに記録する。
+def _maybe_log_correction_feedback(user_message: str, history: list[dict], user_id: int) -> None:
+    """ユーザーの発言が直前の志粋の返答への訂正・不満らしければ、feedback_logに記録し、
+    かつ次の会話ターンから即座に参照できるよう新皮質(neocortex)へも直接記録する。
 
     例外を伴わないバグ・不満(「その答え違うよ」等)はsrc/core/error_log.pyでは
     拾えない(実際にPythonの例外が起きた場合しか記録されないため)。ここで
-    キーワードベースに検知し、自己修復プロトコルの追加の材料として蓄積する。
-    誤検知は許容する設計(人間が後で読んで判断するだけで、自動でコードは
-    書き換わらないため実害が無い)。ログ自体の失敗で会話を止めないよう
-    例外は握りつぶす。
+    キーワードベースに検知し、自己修復プロトコルの追加の材料としてfeedback_logへ
+    蓄積する(こちらは人間が後で読むだけで、自動で反映される経路は無い)。
+
+    それとは別に、この訂正内容をneocortexへ"correction"カテゴリで即座に保存する。
+    build_recall_context()は毎ターンneocortexを検索するため、翌日の睡眠モードを
+    待たずに次の返信から反映される(「決めつけないで」のような訂正を言われた
+    直後にまた繰り返す、という事故を防ぐ)。埋め込み1回分のコストで済むため、
+    生成そのもの(自己回帰的なLLM呼び出し)より十分軽く、応答の遅延にはほぼ影響しない。
+    誤検知は許容する設計(多少無関係な訂正メモリが増えても実害は小さい)。
+    ログ自体の失敗で会話を止めないよう例外は握りつぶす。
     """
     try:
         if not feedback_log.looks_like_correction(user_message):
@@ -159,6 +166,13 @@ def _maybe_log_correction_feedback(user_message: str, history: list[dict]) -> No
             previous_assistant_response=normalized[last_assistant_index]["content"],
             correction_message=user_message,
         )
+
+        neocortex.add_memory(
+            f"訂正: {user_message}",
+            category="correction",
+            source_episode_ids=[],
+            user_id=user_id,
+        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -166,7 +180,7 @@ def _maybe_log_correction_feedback(user_message: str, history: list[dict]) -> No
 def _stream_shisui_events_inner(
     user_message: str, history: list[dict], user_id: int, conversation_id: int
 ) -> Iterator[ChatEvent]:
-    _maybe_log_correction_feedback(user_message, history)
+    _maybe_log_correction_feedback(user_message, history, user_id)
 
     # モデルは学習データの時点を「現在」だと錯覚するため(例: 「来期のアニメ」を
     # 学習当時の季節で検索してしまう)、実際の今日の日付を明示的に教える。

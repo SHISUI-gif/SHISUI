@@ -10,6 +10,13 @@ def test_looks_like_correction_detects_common_phrases():
     assert not feedback_log.looks_like_correction("次は何しようか")
 
 
+def test_looks_like_correction_detects_presumptuous_phrasing():
+    """「決めつけ」系は元のキーワード一覧に無く、実際に検知漏れしていた訂正の再発防止テスト。"""
+    assert feedback_log.looks_like_correction("そこまで好きではないな、決めつけるの気をつけて")
+    assert feedback_log.looks_like_correction("勝手に思い込まないでほしい")
+    assert feedback_log.looks_like_correction("そんなこと言ってないよ")
+
+
 def test_log_feedback_appends_and_marks_unreviewed(monkeypatch, tmp_path):
     monkeypatch.setattr(feedback_log, "FEEDBACK_LOG_FILE", tmp_path / "feedback_log.json")
 
