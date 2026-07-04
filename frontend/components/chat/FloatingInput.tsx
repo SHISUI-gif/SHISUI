@@ -64,7 +64,9 @@ export function FloatingInput({ onSend, disabled, autoFocus }: FloatingInputProp
             rows={1}
             className={cn(
               "field-sizing-content min-h-0 flex-1 resize-none bg-transparent border-none outline-none",
-              "px-0 py-0 text-sm leading-relaxed text-white/90",
+              // iOS Safariはinput/textareaのフォントサイズが16px未満だとフォーカス時に
+              // 自動でズームインしてしまうため、スマホ幅ではtext-base(16px)を使う
+              "px-0 py-0 text-base leading-relaxed text-white/90 sm:text-sm",
               "placeholder:text-white/25 placeholder:font-mono placeholder:text-xs placeholder:tracking-wider",
               "focus:outline-none focus-visible:outline-none focus-visible:ring-0",
               "disabled:cursor-not-allowed disabled:opacity-30",
