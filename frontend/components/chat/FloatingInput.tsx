@@ -7,14 +7,19 @@ import { EASE } from "@/lib/motion"
 
 interface FloatingInputProps {
   onSend: (message: string) => void
-  disabled?: boolean
+  onStop?: () => void
+  isStreaming?: boolean
   autoFocus?: boolean
 }
 
 /**
  * 画面下部に1本の線だけ見える、極限までフラットな入力欄。
+ *
+ * Enterは改行(通常のテキストエリアと同じ挙動)。送信はCmd/Ctrl+Enterか
+ * Sendボタンのみ — 誤って送信してしまう事故を減らすため、あえて
+ * 「Enterで即送信」にはしていない。
  */
-export function FloatingInput({ onSend, disabled, autoFocus }: FloatingInputProps) {
+export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: FloatingInputProps) {
   const [value, setValue] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -26,24 +31,24 @@ export function FloatingInput({ onSend, disabled, autoFocus }: FloatingInputProp
 
   const handleSend = () => {
     const trimmed = value.trim()
-    if (!trimmed || disabled) return
+    if (!trimmed || isStreaming) return
     onSend(trimmed)
     setValue("")
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    // IME変換確定のEnter(isComposing、またはIME経由の場合keyCode 229)は送信としない。
-    // これを見ないと、日本語入力中に変換確定しただけでメッセージが送信されてしまう。
+    // IME変換確定のEnter(isComposing、またはIME経由の場合keyCode 229)はここでは無視。
     if (event.nativeEvent.isComposing || event.keyCode === 229) {
       return
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault()
       handleSend()
     }
+    // 通常のEnter(修飾キーなし)は改行として素通しする(送信しない)
   }
 
-  const canSend = !disabled && value.trim().length > 0
+  const canSend = !isStreaming && value.trim().length > 0
 
   return (
     <motion.div
@@ -59,8 +64,8 @@ export function FloatingInput({ onSend, disabled, autoFocus }: FloatingInputProp
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="志粋にメッセージを送る..."
-            disabled={disabled}
+            placeholder="志粋にメッセージを送る... (Cmd/Ctrl+Enterで送信)"
+            disabled={isStreaming}
             rows={1}
             className={cn(
               "field-sizing-content min-h-0 flex-1 resize-none bg-transparent border-none outline-none",
@@ -72,19 +77,34 @@ export function FloatingInput({ onSend, disabled, autoFocus }: FloatingInputProp
               "disabled:cursor-not-allowed disabled:opacity-30",
             )}
           />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!canSend}
-            className={cn(
-              "shrink-0 bg-transparent border-none outline-none cursor-pointer",
-              "font-mono text-[10px] tracking-[0.25em] text-white/30 uppercase",
-              "transition-colors hover:text-[#c8ff00]",
-              "focus-visible:outline-none disabled:pointer-events-none disabled:opacity-0",
-            )}
-          >
-            Send
-          </button>
+          {isStreaming ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className={cn(
+                "shrink-0 bg-transparent border-none outline-none cursor-pointer",
+                "font-mono text-[10px] tracking-[0.25em] text-[#c8ff00]/70 uppercase",
+                "transition-colors hover:text-[#c8ff00]",
+                "focus-visible:outline-none",
+              )}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!canSend}
+              className={cn(
+                "shrink-0 bg-transparent border-none outline-none cursor-pointer",
+                "font-mono text-[10px] tracking-[0.25em] text-white/30 uppercase",
+                "transition-colors hover:text-[#c8ff00]",
+                "focus-visible:outline-none disabled:pointer-events-none disabled:opacity-0",
+              )}
+            >
+              Send
+            </button>
+          )}
         </div>
       </div>
     </motion.div>

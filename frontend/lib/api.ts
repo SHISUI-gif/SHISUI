@@ -19,12 +19,17 @@ export class AuthError extends Error {}
  * conversationIdがnull(新しい会話)の場合、サーバー側が新規作成して
  * 各イベントのconversation_idとして返してくる。呼び出し側はそれを拾って
  * 以降のメッセージに使う。
+ *
+ * signalを渡すと、誤送信時などに呼び出し側でfetch自体を中断できる
+ * (中断時はDOMException "AbortError"がそのままthrowされるので、
+ * 呼び出し側でエラー扱いせず区別すること)。
  */
 export async function* streamChat(
   message: string,
   history: ChatMessage[],
   token: string,
   conversationId: number | null,
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatStreamEvent> {
   const response = await fetch("/api/chat", {
     method: "POST",
@@ -37,6 +42,7 @@ export async function* streamChat(
       history: history.map((m) => ({ role: m.role, content: m.content })),
       conversation_id: conversationId,
     }),
+    signal,
   })
 
   if (response.status === 401) {

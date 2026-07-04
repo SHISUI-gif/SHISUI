@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { LoginForm } from "@/components/auth/LoginForm"
 import { ChatMessages } from "@/components/chat/ChatMessages"
@@ -76,6 +76,7 @@ export default function Home() {
   const [chatOpen, setChatOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [ready, setReady] = useState(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     setReady(true)
@@ -127,6 +128,12 @@ export default function Home() {
     }
   }
 
+  const handleStop = () => {
+    // 誤送信・送信取り消し用。ストリーミング中のfetchを中断する
+    // (それまでに届いていた内容はメッセージとしてそのまま残す)
+    abortControllerRef.current?.abort()
+  }
+
   const handleSend = async (text: string) => {
     if (!user) return
     const userMessage: ChatMessage = { role: "user", content: text }
@@ -135,9 +142,11 @@ export default function Home() {
     setToolStatus(undefined)
 
     const isNewConversation = conversationId === null
+    const controller = new AbortController()
+    abortControllerRef.current = controller
 
     try {
-      for await (const event of streamChat(text, messages, user.token, conversationId)) {
+      for await (const event of streamChat(text, messages, user.token, conversationId, controller.signal)) {
         if (conversationId === null) {
           setConversationId(event.conversation_id)
         }
@@ -167,6 +176,18 @@ export default function Home() {
         handleLogout()
         return
       }
+      if (error instanceof DOMException && error.name === "AbortError") {
+        // 誤送信を止めた場合。エラーとしては見せず、それまで届いた分だけ残す
+        // (何も届いていなければ空の吹き出しを消す)
+        setMessages((prev) => {
+          const last = prev[prev.length - 1]
+          if (last && last.role === "assistant" && !last.content && !last.thinking) {
+            return prev.slice(0, -1)
+          }
+          return prev
+        })
+        return
+      }
       setMessages((prev) => {
         const next = [...prev]
         next[next.length - 1] = {
@@ -176,6 +197,7 @@ export default function Home() {
         return next
       })
     } finally {
+      abortControllerRef.current = null
       setIsStreaming(false)
       setToolStatus(undefined)
     }
@@ -342,7 +364,8 @@ export default function Home() {
 
             <FloatingInput
               onSend={handleSend}
-              disabled={isStreaming}
+              onStop={handleStop}
+              isStreaming={isStreaming}
               autoFocus
             />
           </motion.div>
