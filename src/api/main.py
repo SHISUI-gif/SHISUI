@@ -23,6 +23,15 @@ from src.memory import conversations
 from src.memory.scheduler import maybe_run_daily_sleep
 from src.study.scheduler import maybe_run_daily_study
 
+# OllamaのllamaserverはモデルごとにOLLAMA_NUM_PARALLEL=1(-np 1)で動いており、
+# 実質「同時に1人分しか生成できない」。複数人が同時にメッセージを送ると、
+# 後続のリクエストはOllama側で無言のまま待たされ、その間ストリーミング
+# レスポンスに一切バイトが流れないため、Cloudflareトンネルの無応答タイムアウト
+# (約100秒)に引っかかって502/524になっていた。このロックで「順番待ち中」を
+# 明示的に送り続け、コネクションを生かしたままユーザーにも状況を見せる。
+_generation_lock = threading.Lock()
+_QUEUE_POLL_SECONDS = 5
+
 app = FastAPI(title="志粋 API")
 
 
@@ -137,14 +146,27 @@ def chat(request: ChatRequest, authorization: str | None = Header(None)) -> Stre
     else:
         conversations.touch_conversation(conversation_id)
 
-    def event_stream():
-        for event in stream_shisui_events(request.message, history, user_id, conversation_id):
-            yield (
-                json.dumps(
-                    {"type": event.type, "text": event.text, "conversation_id": conversation_id},
-                    ensure_ascii=False,
-                )
-                + "\n"
+    def _emit(event_type: str, text: str) -> str:
+        return (
+            json.dumps(
+                {"type": event_type, "text": text, "conversation_id": conversation_id},
+                ensure_ascii=False,
             )
+            + "\n"
+        )
+
+    def event_stream():
+        # Ollamaは実質1リクエストずつしか生成できないため、既に誰かの生成が
+        # 進行中なら「順番待ち中」を送り続けてコネクションを維持する。
+        # 無言のまま待たせると、トンネル(Cloudflare)の無応答タイムアウトで
+        # 502/524になってしまうため、必ず定期的にバイトを流し続ける。
+        while not _generation_lock.acquire(timeout=_QUEUE_POLL_SECONDS):
+            yield _emit("tool_status", "順番待ち中...")
+
+        try:
+            for event in stream_shisui_events(request.message, history, user_id, conversation_id):
+                yield _emit(event.type, event.text)
+        finally:
+            _generation_lock.release()
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")

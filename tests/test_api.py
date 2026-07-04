@@ -4,6 +4,8 @@
 認証・会話のアクセス制御ロジックのみを検証する。
 """
 import hashlib
+import threading
+import time
 
 import ollama
 import pytest
@@ -161,3 +163,56 @@ def test_conversation_messages_hidden_from_non_owner(client, monkeypatch):
 
     assert len(own_view) > 0
     assert other_view == []
+
+
+def test_concurrent_chat_requests_queue_instead_of_hanging_silently(client, monkeypatch):
+    """Ollamaは実質1リクエストずつしか処理できない(-np 1)。友達数人が同時に
+    メッセージを送ったとき、後続のリクエストが無言のまま待たされると
+    トンネルの無応答タイムアウトで502/524になる(実際に起きた不具合)。
+    2人目には「順番待ち中」のステータスが届き続け、無言のまま待たされない
+    ことを検証する。"""
+    monkeypatch.setattr(main, "_QUEUE_POLL_SECONDS", 0.05)
+
+    release_first = threading.Event()
+    first_started = threading.Event()
+
+    def slow_fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+
+        def gen():
+            first_started.set()
+            release_first.wait(timeout=5)
+            yield {"message": {"content": "最初の返信"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", slow_fake_chat)
+
+    user1 = client.post("/api/auth/register", json={"name": "ユーザー1", "password": "pw1"}).json()
+    user2 = client.post("/api/auth/register", json={"name": "ユーザー2", "password": "pw2"}).json()
+
+    results = {}
+
+    def run(name, token, message):
+        response = client.post(
+            "/api/chat",
+            json={"message": message, "history": []},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        results[name] = response.text
+
+    thread1 = threading.Thread(target=run, args=("first", user1["token"], "1つ目"))
+    thread1.start()
+    assert first_started.wait(timeout=5)  # 1人目がロックを握ってOllama呼び出し中になるのを待つ
+
+    thread2 = threading.Thread(target=run, args=("second", user2["token"], "2つ目"))
+    thread2.start()
+    time.sleep(0.3)  # 2人目が「順番待ち中」を数回ポーリングする時間を与える
+    release_first.set()
+
+    thread1.join(timeout=5)
+    thread2.join(timeout=5)
+
+    assert "最初の返信" in results["first"]
+    assert "順番待ち中" in results["second"]
