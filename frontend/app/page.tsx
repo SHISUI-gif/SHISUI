@@ -287,6 +287,15 @@ export default function Home() {
               AI
             </motion.span>
 
+            <motion.p
+              className="relative z-10 mt-8 px-6 text-center font-mono text-sm text-white/50 sm:text-base"
+              initial={ready ? { opacity: 0, y: 16 } : false}
+              animate={ready ? { opacity: 1, y: 0 } : undefined}
+              transition={{ duration: 0.8, ease: EASE, delay: 0.9 }}
+            >
+              {user.name}さん、今日は何を話そうか?
+            </motion.p>
+
             <motion.button
               type="button"
               onClick={() => setChatOpen(true)}
