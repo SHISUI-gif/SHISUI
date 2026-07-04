@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { cn } from "@/lib/utils"
 import { DURATION, EASE } from "@/lib/motion"
 import type { ChatMessage as ChatMessageType } from "@/lib/types"
+import { MarkdownContent } from "./MarkdownContent"
 import { PendingPulse } from "./PendingPulse"
 import { ThinkingAccordion } from "./ThinkingAccordion"
 
@@ -48,14 +49,10 @@ export function ChatMessage({ message, isStreamingNow }: ChatMessageProps) {
             </motion.div>
           )}
         </AnimatePresence>
-        <p
-          className={cn(
-            "text-sm leading-relaxed whitespace-pre-wrap",
-            isUser ? "text-white/90" : "text-white/60",
-          )}
-        >
-          {message.content}
-        </p>
+        <MarkdownContent
+          content={message.content}
+          className={isUser ? "text-white/90" : "text-white/60"}
+        />
       </div>
     </motion.div>
   )
