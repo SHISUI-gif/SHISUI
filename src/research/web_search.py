@@ -1,8 +1,13 @@
-"""Tavily Search APIを使ったWeb検索クライアント。"""
+"""Web検索クライアント(Tavily Search API + DuckDuckGo)。
+
+Tavily単体だと(無料枠の制約などで)得られる情報が薄いことがあるため、
+無料・APIキー不要なDuckDuckGo(ddgsパッケージ)を組み合わせて情報量を補う。
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ddgs import DDGS
 from tavily import TavilyClient
 
 from config.settings import settings
@@ -40,4 +45,19 @@ class WebSearchClient:
                 content=item.get("content", ""),
             )
             for item in response.get("results", [])
+        ]
+
+
+class DuckDuckGoSearchClient:
+    """DuckDuckGo(ddgsパッケージ)のラッパー。APIキー不要でTavilyの補完に使う。"""
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        results = DDGS().text(query, max_results=max_results)
+        return [
+            SearchResult(
+                title=item.get("title", ""),
+                url=item.get("href", ""),
+                content=item.get("body", ""),
+            )
+            for item in results
         ]
