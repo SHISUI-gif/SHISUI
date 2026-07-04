@@ -8,13 +8,16 @@ from __future__ import annotations
 from src.memory import neocortex
 
 
-def build_recall_context(query: str, top_k: int | None = None) -> str:
-    """ユーザーの発言に関連する長期記憶を検索し、システムプロンプトに連結できる文字列を返す。"""
+def build_recall_context(query: str, user_id: int, top_k: int | None = None) -> str:
+    """ユーザーの発言に関連する長期記憶を検索し、システムプロンプトに連結できる文字列を返す。
+
+    user_idで絞り込むため、他の友達の記憶が混ざって出てくることはない。
+    """
     if not query.strip():
         # 空文字列をembedding検索に渡すと、chromadb側で空の埋め込みが返り
         # IndexErrorでクラッシュする(Ollama埋め込みAPIが空文字を空リストで返すため)
         return ""
-    matches = neocortex.search(query, top_k=top_k)
+    matches = neocortex.search(query, user_id=user_id, top_k=top_k)
     if not matches:
         return ""
 

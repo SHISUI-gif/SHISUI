@@ -47,40 +47,58 @@ def _extract_json_array(raw_text: str) -> list[dict]:
 
 
 def run_sleep_cycle(llm: OllamaClient | None = None) -> SleepCycleResult:
-    """未統合の海馬エピソードを新皮質へ圧縮し、海馬側を整理する。"""
+    """未統合の海馬エピソードを、ユーザーごとに分けて新皮質へ圧縮し、海馬側を整理する。
+
+    友達それぞれの会話が互いの記憶に混ざらないよう、user_idでグループ化してから
+    ユーザーごとに別のトランスクリプトとして圧縮する。user_idが無いエピソード
+    (voicechat等、Web版のユーザー概念導入より前からある単一ユーザー向け機能)は
+    圧縮対象から外す(誰の長期記憶として保存すべきか特定できないため)。
+    """
     llm = llm or OllamaClient()
     episodes = hippocampus.get_unconsolidated_episodes()
     if not episodes:
         return SleepCycleResult(episodes_considered=0, memories_added=0, memories_superseded=0)
 
-    transcript = "\n".join(f"[{e.timestamp}] {e.role}({e.source}): {e.content}" for e in episodes)
-    raw_response = llm.chat(SLEEP_SYSTEM_PROMPT, transcript)
-    extractions = _extract_json_array(raw_response)
+    episodes_by_user: dict[int, list] = {}
+    for episode in episodes:
+        if episode.user_id is None:
+            continue
+        episodes_by_user.setdefault(episode.user_id, []).append(episode)
 
-    episode_ids = [e.id for e in episodes]
     memories_added = 0
     memories_superseded = 0
+    all_extractions: list[dict] = []
 
-    for item in extractions:
-        text = (item.get("text") or "").strip()
-        category = (item.get("category") or "fact").strip()
-        if not text:
-            continue
+    for user_id, user_episodes in episodes_by_user.items():
+        transcript = "\n".join(
+            f"[{e.timestamp}] {e.role}({e.source}): {e.content}" for e in user_episodes
+        )
+        raw_response = llm.chat(SLEEP_SYSTEM_PROMPT, transcript)
+        extractions = _extract_json_array(raw_response)
+        all_extractions.extend(extractions)
 
-        existing = neocortex.find_most_similar(text)
-        if existing and existing.similarity >= settings.memory_similarity_threshold:
-            neocortex.mark_superseded(existing.id)
-            memories_superseded += 1
+        episode_ids = [e.id for e in user_episodes]
+        for item in extractions:
+            text = (item.get("text") or "").strip()
+            category = (item.get("category") or "fact").strip()
+            if not text:
+                continue
 
-        neocortex.add_memory(text, category, episode_ids)
-        memories_added += 1
+            existing = neocortex.find_most_similar(text, user_id=user_id)
+            if existing and existing.similarity >= settings.memory_similarity_threshold:
+                neocortex.mark_superseded(existing.id)
+                memories_superseded += 1
 
-    hippocampus.mark_consolidated(episode_ids)
+            neocortex.add_memory(text, category, episode_ids, user_id=user_id)
+            memories_added += 1
+
+    all_episode_ids = [e.id for e in episodes]
+    hippocampus.mark_consolidated(all_episode_ids)
     hippocampus.prune_old_episodes(settings.memory_retention_days)
 
     return SleepCycleResult(
         episodes_considered=len(episodes),
         memories_added=memories_added,
         memories_superseded=memories_superseded,
-        raw_extractions=extractions,
+        raw_extractions=all_extractions,
     )

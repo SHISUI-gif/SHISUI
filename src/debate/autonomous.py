@@ -51,8 +51,13 @@ def run_autonomous_debate(llm: OllamaClient | None = None) -> AutonomousDebateRe
         debate_result = system.run(topic)
 
         summary = debate_result.conclusion[:CONCLUSION_SUMMARY_MAX_CHARS]
+        # 自律討論の結論は特定の友達個人のものではなく志粋自身の成長なので、
+        # 共通のSYSTEM_USER_IDに保存する(全ユーザーの会話で参照されうる)
         memory_id = neocortex.add_memory(
-            f"討論テーマ「{topic}」の結論: {summary}", category="insight", source_episode_ids=[]
+            f"討論テーマ「{topic}」の結論: {summary}",
+            category="insight",
+            source_episode_ids=[],
+            user_id=neocortex.SYSTEM_USER_ID,
         )
 
         debated = DebatedTopic(

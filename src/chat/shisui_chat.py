@@ -55,11 +55,16 @@ def _normalize_history(history: list[dict]) -> list[dict]:
     return normalized
 
 
-def stream_shisui_events(user_message: str, history: list[dict]) -> Iterator[ChatEvent]:
+def stream_shisui_events(
+    user_message: str, history: list[dict], user_id: int, conversation_id: int
+) -> Iterator[ChatEvent]:
     """志粋の応答を、構造化イベント("thinking"/"content"/"tool_status")として逐次yieldする。
 
-    実際にOllamaと対話する唯一の実装。Gradio向け・FastAPI向けの両方が、
-    この関数の出力を自分の形式に整形するだけの薄いレイヤーとして実装される。
+    実際にOllamaと対話する唯一の実装。FastAPI(src/api/main.py)が、この関数の
+    出力をNDJSON形式に整形するだけの薄いレイヤーとして実装される。
+
+    user_id・conversation_idは、友達それぞれの会話・記憶を混ぜない/覗き見しない
+    ためのスコープ(海馬への記録・新皮質での記憶検索の両方に使われる)。
 
     内部の処理(記憶検索・ツールコール・Ollama通信)のどこで例外が起きても、
     ここで必ず捕捉してエラーイベントに変換する。捕捉範囲をOllama呼び出しだけに
@@ -67,7 +72,7 @@ def stream_shisui_events(user_message: str, history: list[dict]) -> Iterator[Cha
     FastAPIのストリームごと強制終了する不具合があったため、関数全体を対象にしている。
     """
     try:
-        yield from _stream_shisui_events_inner(user_message, history)
+        yield from _stream_shisui_events_inner(user_message, history, user_id, conversation_id)
     except Exception as e:  # noqa: BLE001
         # ユーザーには要点だけを見せつつ、完全なトレースバックは自己修復プロトコル
         # (src/core/evolution.py)が後で読めるようエラーログに残しておく
@@ -158,7 +163,9 @@ def _maybe_log_correction_feedback(user_message: str, history: list[dict]) -> No
         pass
 
 
-def _stream_shisui_events_inner(user_message: str, history: list[dict]) -> Iterator[ChatEvent]:
+def _stream_shisui_events_inner(
+    user_message: str, history: list[dict], user_id: int, conversation_id: int
+) -> Iterator[ChatEvent]:
     _maybe_log_correction_feedback(user_message, history)
 
     # モデルは学習データの時点を「現在」だと錯覚するため(例: 「来期のアニメ」を
@@ -170,7 +177,7 @@ def _stream_shisui_events_inner(user_message: str, history: list[dict]) -> Itera
         "時間に関する言及は、必ずこの日付を基準に判断・検索してください。"
     )
 
-    recall_context = memory_context.build_recall_context(user_message)
+    recall_context = memory_context.build_recall_context(user_message, user_id=user_id)
     if recall_context:
         system_content += "\n\n" + recall_context
 
@@ -187,7 +194,9 @@ def _stream_shisui_events_inner(user_message: str, history: list[dict]) -> Itera
     messages.extend(_normalize_history(history))
     messages.append({"role": "user", "content": user_message})
 
-    hippocampus.log_episode(role="user", content=user_message, source="chat")
+    hippocampus.log_episode(
+        role="user", content=user_message, source="chat", user_id=user_id, conversation_id=conversation_id
+    )
 
     # 「どのモデルへ振り分けるか」と「検索が必要か」は互いの結果に依存しないため、
     # 並列に実行して待ち時間を短縮する(直列だと合計6〜8秒かかっていたのがmax()で済む)。
@@ -232,19 +241,30 @@ def _stream_shisui_events_inner(user_message: str, history: list[dict]) -> Itera
             yield ChatEvent(type="content", text=content_piece)
 
     if partial_content:
-        hippocampus.log_episode(role="assistant", content=partial_content, source="chat")
+        hippocampus.log_episode(
+            role="assistant",
+            content=partial_content,
+            source="chat",
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
 
 
-def stream_shisui_reply(user_message: str, history: list[dict]) -> Iterator[str]:
-    """Gradio向け: 志粋としての応答を、累積HTML文字列として逐次yieldする。
+def stream_shisui_reply(
+    user_message: str, history: list[dict], user_id: int = 1, conversation_id: int = 1
+) -> Iterator[str]:
+    """Gradio向け(現在は運用から外している。詳細はCLAUDE.md参照): 志粋としての応答を、
+    累積HTML文字列として逐次yieldする。
 
     呼び出しごとに部分的な応答テキストが積み上がった状態でyieldされる
     (Gradio ChatInterfaceの規約に合わせている)。中身はstream_shisui_events()を
     整形しているだけで、Ollamaとの対話ロジック自体は一切重複させない。
+    Gradioはユーザーの概念が無い単一ユーザー向けだったため、user_id/conversation_idは
+    固定値のデフォルトを持たせている。
     """
     partial_thinking = ""
     partial_content = ""
-    for event in stream_shisui_events(user_message, history):
+    for event in stream_shisui_events(user_message, history, user_id, conversation_id):
         if event.type == "tool_status":
             yield event.text
             continue

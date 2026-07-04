@@ -72,7 +72,11 @@ def _study_topic(topic: str, llm: OllamaClient, mentor: GeminiClient, turns: int
         dialogue.append({"role": "志粋", "content": question})
 
     insight = llm.chat(INSIGHT_SYSTEM_PROMPT, _format_dialogue(dialogue))
-    memory_id = neocortex.add_memory(insight, category="insight", source_episode_ids=[])
+    # 夜間修行の気づきは特定の友達個人のものではなく志粋自身の成長なので、
+    # 共通のSYSTEM_USER_IDに保存する(全ユーザーの会話で参照されうる)
+    memory_id = neocortex.add_memory(
+        insight, category="insight", source_episode_ids=[], user_id=neocortex.SYSTEM_USER_ID
+    )
 
     return TopicResult(topic=topic, dialogue=dialogue, insight=insight, memory_id=memory_id)
 

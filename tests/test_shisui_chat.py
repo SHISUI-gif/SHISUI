@@ -3,12 +3,39 @@
 実際のOllamaサーバーには接続せず、think=Trueで得られるthinkingフィールドの
 有無に応じた表示切り替えのみを検証する(会話ロジック全体はshisui_app.py側の
 モジュールテストで別途検証済み)。
+
+stream_shisui_reply()/stream_shisui_events()は内部でhippocampus.log_episode()・
+memory_context.build_recall_context()・literary_context.build_literary_hint()を
+必ず呼ぶため、以前は一部のテストだけがERROR_LOG_FILE等を個別に隔離しており、
+海馬(本番のHIPPOCAMPUS_DB_PATH)への書き込みが隔離されていなかった。
+stream_shisui_reply()はuser_id/conversation_idを省略するとデフォルト値(1, 1)を
+使うため、これがそのまま本番DBの実際のuser_id=1アカウントと衝突し、テスト用の
+偽の会話が実ユーザーの会話履歴に紛れ込むという実害のある不具合になっていた。
+このファイル全体にautouseで最小限の隔離をかけることで、個々のテストが
+明示的に隔離し忘れても本番データに触れないようにする。
 """
+import hashlib
+
 import ollama
 import pytest
 
 from src.chat import shisui_chat
+from src.corpus import ingest as literary_ingest
 from src.core import error_log, feedback_log
+from src.memory import hippocampus, neocortex
+
+
+def _fake_embeddings(model: str, prompt: str) -> dict:
+    digest = hashlib.sha256(prompt.encode("utf-8")).digest()
+    return {"embedding": [b / 255.0 for b in digest[:16]]}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_all_storage(tmp_path, monkeypatch):
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    monkeypatch.setattr(neocortex, "NEOCORTEX_DB_DIR", tmp_path / "neocortex_chroma")
+    monkeypatch.setattr(literary_ingest, "LITERARY_CHROMA_DIR", tmp_path / "literary_chroma")
+    monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
 
 
 @pytest.mark.parametrize(
@@ -183,3 +210,27 @@ def test_stream_shisui_reply_does_not_log_feedback_for_normal_messages(monkeypat
     list(shisui_chat.stream_shisui_reply("ありがとう!", history))
 
     assert feedback_log.get_unreviewed_feedback() == []
+
+
+def test_stream_shisui_events_logs_episodes_with_user_and_conversation_id(monkeypatch):
+    """user_id・conversation_idが海馬への記録まで正しく伝わることを検証する
+    (友達それぞれの会話を混ぜない/覗き見しないための多ユーザー化の要)。"""
+    monkeypatch.setattr(shisui_chat.memory_context, "build_recall_context", lambda *a, **k: "")
+    monkeypatch.setattr(shisui_chat.literary_context, "build_literary_hint", lambda *a, **k: "")
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+
+        def gen():
+            yield {"message": {"content": "了解!"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    list(shisui_chat.stream_shisui_events("こんにちは", [], user_id=42, conversation_id=7))
+
+    episodes = hippocampus.get_unconsolidated_episodes()
+    assert len(episodes) == 2
+    assert all(e.user_id == 42 and e.conversation_id == 7 for e in episodes)

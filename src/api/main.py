@@ -10,14 +10,16 @@ from __future__ import annotations
 import json
 import threading
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.chat.shisui_chat import stream_shisui_events
+from src.core import auth
 from src.corpus.scheduler import maybe_run_daily_archive_crawl
 from src.debate.scheduler import maybe_run_daily_debate_autonomous
+from src.memory import conversations
 from src.memory.scheduler import maybe_run_daily_sleep
 from src.study.scheduler import maybe_run_daily_study
 
@@ -53,6 +55,23 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
+    conversation_id: int | None = None
+
+
+class AuthRequest(BaseModel):
+    name: str
+    password: str
+
+
+def _require_user_id(authorization: str | None) -> int:
+    """`Authorization: Bearer <token>`ヘッダーからuser_idを取り出す。無効なら401を返す。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="認証が必要です。")
+    token = authorization.removeprefix("Bearer ")
+    user_id = auth.get_user_id_for_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="セッションが無効です。再ログインしてください。")
+    return user_id
 
 
 @app.get("/api/health")
@@ -61,19 +80,71 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.post("/api/auth/register")
+def register(request: AuthRequest) -> dict:
+    """新規ユーザーを登録し、セッショントークンを発行する。"""
+    result = auth.register(request.name, request.password)
+    if not result.success:
+        raise HTTPException(status_code=409, detail=result.error)
+    return {"token": result.token, "user_id": result.user_id, "name": result.name}
+
+
+@app.post("/api/auth/login")
+def login(request: AuthRequest) -> dict:
+    """既存ユーザーでログインし、新しいセッショントークンを発行する。"""
+    result = auth.login(request.name, request.password)
+    if not result.success:
+        raise HTTPException(status_code=401, detail=result.error)
+    return {"token": result.token, "user_id": result.user_id, "name": result.name}
+
+
+@app.get("/api/conversations")
+def list_conversations(authorization: str | None = Header(None)) -> list[dict]:
+    """ログイン中のユーザー自身の会話スレッドを、直近に更新された順で一覧する。"""
+    user_id = _require_user_id(authorization)
+    return [
+        {"id": t.id, "title": t.title, "created_at": t.created_at, "updated_at": t.updated_at}
+        for t in conversations.list_conversations(user_id)
+    ]
+
+
+@app.get("/api/conversations/{conversation_id}/messages")
+def get_conversation_messages(
+    conversation_id: int, authorization: str | None = Header(None)
+) -> list[dict]:
+    """指定した会話の履歴を返す。他人の会話IDを渡された場合は空リストを返す
+    (conversations.get_messages()内のuser_id一致チェックによる)。"""
+    user_id = _require_user_id(authorization)
+    return conversations.get_messages(conversation_id, user_id)
+
+
 @app.post("/api/chat")
-def chat(request: ChatRequest) -> StreamingResponse:
+def chat(request: ChatRequest, authorization: str | None = Header(None)) -> StreamingResponse:
     """志粋との会話をNDJSON形式でストリーミングする。
 
-    1行が1つのJSONイベント: {"type": "thinking" | "content" | "tool_status", "text": "..."}
-    Gradio向けとは異なり、各イベントは「差分」(そのチャンクで新しく生成された分)であり、
+    1行が1つのJSONイベント: {"type": "thinking" | "content" | "tool_status", "text": "...",
+    "conversation_id": int}。各イベントは「差分」(そのチャンクで新しく生成された分)であり、
     累積テキストではない。フロントエンドはtypeごとに表示先(アコーディオン/本文/ステータス)
-    を分けて追記していく。
+    を分けて追記していく。conversation_idは新規会話の場合にフロントが知る唯一の方法なので
+    毎イベントに含める。
     """
+    user_id = _require_user_id(authorization)
     history = [turn.model_dump() for turn in request.history]
 
+    conversation_id = request.conversation_id
+    if conversation_id is None:
+        conversation_id = conversations.create_conversation(user_id, request.message)
+    else:
+        conversations.touch_conversation(conversation_id)
+
     def event_stream():
-        for event in stream_shisui_events(request.message, history):
-            yield json.dumps({"type": event.type, "text": event.text}, ensure_ascii=False) + "\n"
+        for event in stream_shisui_events(request.message, history, user_id, conversation_id):
+            yield (
+                json.dumps(
+                    {"type": event.type, "text": event.text, "conversation_id": conversation_id},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
