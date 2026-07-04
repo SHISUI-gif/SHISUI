@@ -24,6 +24,7 @@ from src.chat.model_router import route_model
 from src.common.persona import SHISUI_SYSTEM_PROMPT
 from src.common.tools import ALL_TOOL_SCHEMAS, AVAILABLE_TOOLS
 from src.core import error_log
+from src.core import feedback_log
 from src.corpus import context as literary_context
 from src.memory import context as memory_context
 from src.memory import hippocampus
@@ -120,7 +121,46 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
             raise
 
 
+def _maybe_log_correction_feedback(user_message: str, history: list[dict]) -> None:
+    """ユーザーの発言が直前の志粋の返答への訂正・不満らしければ、feedback_logに記録する。
+
+    例外を伴わないバグ・不満(「その答え違うよ」等)はsrc/core/error_log.pyでは
+    拾えない(実際にPythonの例外が起きた場合しか記録されないため)。ここで
+    キーワードベースに検知し、自己修復プロトコルの追加の材料として蓄積する。
+    誤検知は許容する設計(人間が後で読んで判断するだけで、自動でコードは
+    書き換わらないため実害が無い)。ログ自体の失敗で会話を止めないよう
+    例外は握りつぶす。
+    """
+    try:
+        if not feedback_log.looks_like_correction(user_message):
+            return
+
+        normalized = _normalize_history(history)
+        last_assistant_index = next(
+            (i for i in range(len(normalized) - 1, -1, -1) if normalized[i].get("role") == "assistant"),
+            None,
+        )
+        if last_assistant_index is None:
+            return
+        last_user_index = next(
+            (i for i in range(last_assistant_index - 1, -1, -1) if normalized[i].get("role") == "user"),
+            None,
+        )
+
+        feedback_log.log_feedback(
+            previous_user_message=(
+                normalized[last_user_index]["content"] if last_user_index is not None else ""
+            ),
+            previous_assistant_response=normalized[last_assistant_index]["content"],
+            correction_message=user_message,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _stream_shisui_events_inner(user_message: str, history: list[dict]) -> Iterator[ChatEvent]:
+    _maybe_log_correction_feedback(user_message, history)
+
     # モデルは学習データの時点を「現在」だと錯覚するため(例: 「来期のアニメ」を
     # 学習当時の季節で検索してしまう)、実際の今日の日付を明示的に教える。
     today_str = datetime.now().strftime("%Y年%m月%d日")

@@ -8,7 +8,7 @@ import ollama
 import pytest
 
 from src.chat import shisui_chat
-from src.core import error_log
+from src.core import error_log, feedback_log
 
 
 @pytest.mark.parametrize(
@@ -132,3 +132,54 @@ def test_stream_shisui_reply_logs_unexpected_errors(monkeypatch, tmp_path):
     assert len(logged) == 1
     assert logged[0]["source"] == "stream_shisui_events"
     assert logged[0]["error_type"] == "ResponseError"
+
+
+def test_stream_shisui_reply_logs_correction_feedback(monkeypatch, tmp_path):
+    """例外が起きていなくても、訂正・不満らしい発言はfeedback_logに残る。"""
+    monkeypatch.setattr(feedback_log, "FEEDBACK_LOG_FILE", tmp_path / "feedback_log.json")
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+
+        def gen():
+            yield {"message": {"content": "了解、次から気をつけるね。"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    history = [
+        {"role": "user", "content": "来期のアニメ教えて"},
+        {"role": "assistant", "content": "2023年冬のアニメは..."},
+    ]
+    list(shisui_chat.stream_shisui_reply("それ違うよ、今は2026年だよ", history))
+
+    unreviewed = feedback_log.get_unreviewed_feedback()
+    assert len(unreviewed) == 1
+    assert unreviewed[0]["previous_user_message"] == "来期のアニメ教えて"
+    assert unreviewed[0]["previous_assistant_response"] == "2023年冬のアニメは..."
+    assert unreviewed[0]["correction_message"] == "それ違うよ、今は2026年だよ"
+
+
+def test_stream_shisui_reply_does_not_log_feedback_for_normal_messages(monkeypatch, tmp_path):
+    monkeypatch.setattr(feedback_log, "FEEDBACK_LOG_FILE", tmp_path / "feedback_log.json")
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+
+        def gen():
+            yield {"message": {"content": "どういたしまして!"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    history = [
+        {"role": "user", "content": "来期のアニメ教えて"},
+        {"role": "assistant", "content": "2026年のアニメは..."},
+    ]
+    list(shisui_chat.stream_shisui_reply("ありがとう!", history))
+
+    assert feedback_log.get_unreviewed_feedback() == []

@@ -248,6 +248,37 @@ def run_evolution_list() -> int:
     return 0
 
 
+def run_evolution_feedback_list() -> int:
+    from src.core.feedback_log import get_unreviewed_feedback
+
+    feedback = get_unreviewed_feedback()
+    if not feedback:
+        console.print("[yellow]未レビューの訂正・不満はありません。[/yellow]")
+        return 0
+
+    console.print(
+        "[dim]例外は起きていないが、会話中にユーザーから訂正・不満が伝えられた履歴です。"
+        "実際にコードの問題か、単なる会話の行き違いかは人間の目で判断してください。[/dim]\n"
+    )
+    for entry in feedback:
+        console.print(f"[bold]\\[{entry['id']}][/bold] {entry['timestamp']}")
+        console.print(f"  質問: {entry['previous_user_message']}")
+        console.print(f"  志粋: {entry['previous_assistant_response']}")
+        console.print(f"  訂正: [red]{entry['correction_message']}[/red]\n")
+    console.print(
+        "`python app.py evolution feedback-dismiss <id>` でレビュー済みにできます。"
+    )
+    return 0
+
+
+def run_evolution_feedback_dismiss(feedback_id: str) -> int:
+    from src.core.feedback_log import mark_reviewed
+
+    mark_reviewed(feedback_id)
+    console.print(f"[dim]{feedback_id} をレビュー済みにしました。[/dim]")
+    return 0
+
+
 def run_evolution_show(proposal_id: str) -> int:
     from src.core.evolution import get_proposal
 
@@ -362,6 +393,14 @@ def build_parser() -> argparse.ArgumentParser:
     evolution_apply_parser.add_argument("id", help="修正案のID")
     evolution_reject_parser = evolution_subparsers.add_parser("reject", help="修正案を却下する")
     evolution_reject_parser.add_argument("id", help="修正案のID")
+    evolution_subparsers.add_parser(
+        "feedback-list",
+        help="例外は起きていないが会話中にユーザーから訂正・不満が伝えられた履歴を一覧する",
+    )
+    evolution_feedback_dismiss_parser = evolution_subparsers.add_parser(
+        "feedback-dismiss", help="訂正・不満の履歴をレビュー済みにする"
+    )
+    evolution_feedback_dismiss_parser.add_argument("id", help="履歴のID")
 
     return parser
 
@@ -413,6 +452,10 @@ def main(argv: list[str] | None = None) -> int:
                 return run_evolution_apply(args.id)
             if args.evolution_command == "reject":
                 return run_evolution_reject(args.id)
+            if args.evolution_command == "feedback-list":
+                return run_evolution_feedback_list()
+            if args.evolution_command == "feedback-dismiss":
+                return run_evolution_feedback_dismiss(args.id)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[bold red]エラーが発生しました[/bold red]: {exc}")
         return 1
