@@ -11,8 +11,10 @@
 """
 from __future__ import annotations
 
+import concurrent.futures
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 
 import ollama
 
@@ -74,8 +76,34 @@ def stream_shisui_events(user_message: str, history: list[dict]) -> Iterator[Cha
         )
 
 
+def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[dict]:
+    """think=Trueで応答をストリーミングし、対応していないモデルなら自動でthinkなしに切り替えて再試行する。
+
+    Ollamaは「think非対応」エラー("does not support thinking", 400)を、
+    chat()呼び出し時点ではなく、実際にレスポンスをイテレートし始めた瞬間に
+    遅延して投げてくる(ストリーミング用のレスポンスは遅延評価されるため)。
+    そのため呼び出しだけでなく、forループでのイテレーションもtry/exceptで
+    包む必要がある。モデルの能力チェックは生成開始前にサーバー側で行われるため、
+    このエラーが起きる時点でチャンクは1つも返っていない(取りこぼしの心配はない)。
+    """
+    try:
+        yield from ollama.chat(model=model, messages=messages, stream=True, think=True)
+    except ollama.ResponseError as e:
+        if e.status_code == 400 and "does not support thinking" in e.error:
+            yield from ollama.chat(model=model, messages=messages, stream=True)
+        else:
+            raise
+
+
 def _stream_shisui_events_inner(user_message: str, history: list[dict]) -> Iterator[ChatEvent]:
-    system_content = SHISUI_SYSTEM_PROMPT
+    # モデルは学習データの時点を「現在」だと錯覚するため(例: 「来期のアニメ」を
+    # 学習当時の季節で検索してしまう)、実際の今日の日付を明示的に教える。
+    today_str = datetime.now().strftime("%Y年%m月%d日")
+    system_content = (
+        SHISUI_SYSTEM_PROMPT
+        + f"\n\n今日の日付は{today_str}です。「最新」「今期」「来期」「現在」などの"
+        "時間に関する言及は、必ずこの日付を基準に判断・検索してください。"
+    )
 
     recall_context = memory_context.build_recall_context(user_message)
     if recall_context:
@@ -96,12 +124,21 @@ def _stream_shisui_events_inner(user_message: str, history: list[dict]) -> Itera
 
     hippocampus.log_episode(role="user", content=user_message, source="chat")
 
-    # 質問内容に応じて、その場で最適なモデル(コーディング特化・推論特化・軽量雑談用)へ振り分ける。
-    # 無効時・分類失敗時はsettings.ollama_modelにフォールバックする(route_model内で吸収)。
-    model = route_model(user_message)
+    # 「どのモデルへ振り分けるか」と「検索が必要か」は互いの結果に依存しないため、
+    # 並列に実行して待ち時間を短縮する(直列だと合計6〜8秒かかっていたのがmax()で済む)。
+    # ツール判定は振り分け先の大きいモデル(qwen2.5:32b等)ではなく軽量な分類モデルを使う
+    # (応答が全く届かない時間が長引くと、Cloudflareトンネル経由で524タイムアウトになるため)。
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        model_future = executor.submit(route_model, user_message)
+        tool_future = executor.submit(
+            ollama.chat,
+            model=settings.router_classifier_model,
+            messages=messages,
+            tools=ALL_TOOL_SCHEMAS,
+        )
+        model = model_future.result()
+        first_response = tool_future.result()
 
-    # 1段階目: 志粋自身に、自律検索(web_searchツール)が必要かどうか判断させる
-    first_response = ollama.chat(model=model, messages=messages, tools=ALL_TOOL_SCHEMAS)
     assistant_message = first_response["message"]
     tool_calls = assistant_message["tool_calls"] if "tool_calls" in assistant_message else None
 
@@ -118,20 +155,8 @@ def _stream_shisui_events_inner(user_message: str, history: list[dict]) -> Itera
             messages.append({"role": "tool", "content": tool_result, "tool_name": tool_name})
 
     # 2段階目: (検索結果があれば踏まえて)最終回答をストリーミング生成。
-    # think=Trueにすると、推論対応モデル(deepseek-r1・Qwen3の思考モード等)は
-    # 推論過程をcontentとは別のthinkingフィールドで返す。
-    # 非対応モデル(qwen2.5系・qwen3-coder系など)はOllamaがHTTP 400で拒否するため
-    # (「単に無視される」という当初の想定が誤りだった)、その場合はthinkなしで再試行する。
-    try:
-        response = ollama.chat(model=model, messages=messages, stream=True, think=True)
-    except ollama.ResponseError as e:
-        if e.status_code == 400 and "does not support thinking" in e.error:
-            response = ollama.chat(model=model, messages=messages, stream=True)
-        else:
-            raise
-
     partial_content = ""
-    for chunk in response:
+    for chunk in _stream_with_think_fallback(model, messages):
         message = chunk.get("message", {})
         thinking_piece = message.get("thinking")
         if thinking_piece:

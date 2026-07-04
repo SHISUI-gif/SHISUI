@@ -18,14 +18,24 @@ console = Console()
 
 
 def maybe_run_daily_archive_crawl() -> None:
-    """今日まだ青空文庫全体クロールを実行していなければ実行し、マーカーファイルを更新する。"""
+    """今日まだ青空文庫全体クロールを実行していなければ実行し、マーカーファイルを更新する。
+
+    Gradio・FastAPIを両方起動していると、ほぼ同時に両方のプロセスがこの関数を
+    呼ぶため、マーカーを排他的(exclusive)に先に確保することで、先着した
+    1プロセスだけが実行するようにする。
+    """
     today = date.today().isoformat()
 
-    if (
-        AOZORA_ARCHIVE_MARKER_FILE.exists()
-        and AOZORA_ARCHIVE_MARKER_FILE.read_text(encoding="utf-8").strip() == today
-    ):
-        return
+    if AOZORA_ARCHIVE_MARKER_FILE.exists():
+        if AOZORA_ARCHIVE_MARKER_FILE.read_text(encoding="utf-8").strip() == today:
+            return
+        AOZORA_ARCHIVE_MARKER_FILE.unlink()
+
+    try:
+        with open(AOZORA_ARCHIVE_MARKER_FILE, "x", encoding="utf-8") as f:
+            f.write(today)
+    except FileExistsError:
+        return  # 別プロセスがこの瞬間に既に確保した
 
     try:
         result = run_daily_archive_crawl()
@@ -36,6 +46,5 @@ def maybe_run_daily_archive_crawl() -> None:
                 f"[dim]📚 青空文庫全体クロール: 本日{result.ingested_this_run}件取り込み"
                 f"(累計{result.total_ingested}件、現在の作家: {result.current_author})[/dim]"
             )
-        AOZORA_ARCHIVE_MARKER_FILE.write_text(today, encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
         console.print(f"[yellow]青空文庫全体クロールの自動実行に失敗しました(会話は続行します): {exc}[/yellow]")

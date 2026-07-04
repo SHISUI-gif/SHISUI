@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { cn } from "@/lib/utils"
 import { DURATION, EASE } from "@/lib/motion"
 import type { ChatMessage as ChatMessageType } from "@/lib/types"
+import { PendingPulse } from "./PendingPulse"
 import { ThinkingAccordion } from "./ThinkingAccordion"
 
 interface ChatMessageProps {
@@ -30,6 +31,9 @@ export function ChatMessage({ message, isStreamingNow }: ChatMessageProps) {
       transition={{ duration: DURATION.fast, ease: EASE, delay: isUser ? 0 : 0.1 }}
     >
       <div className={cn("max-w-[85%] sm:max-w-[70%]", isUser ? "text-right" : "text-left")}>
+        {/* 送信直後、thinking/contentのどちらもまだ届いていない空白期間の
+            「止まっているわけではない」表示。最初の1バイトが届いた瞬間に消える。 */}
+        {!isUser && isStreamingNow && !message.thinking && !message.content && <PendingPulse />}
         {/* 応答が完了したら思考中の表示は消す(生成中のこのメッセージだけに表示する) */}
         <AnimatePresence>
           {!isUser && isStreamingNow && message.thinking && (

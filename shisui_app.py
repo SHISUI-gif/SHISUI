@@ -5,7 +5,9 @@ from gradio.themes.utils import colors, fonts
 
 from src.chat.shisui_chat import stream_shisui_reply
 from src.corpus.scheduler import maybe_run_daily_archive_crawl
+from src.debate.scheduler import maybe_run_daily_debate_autonomous
 from src.memory.scheduler import maybe_run_daily_sleep
+from src.study.scheduler import maybe_run_daily_study
 
 
 def chat_with_shisui(user_message, history):
@@ -95,6 +97,10 @@ if __name__ == "__main__":
     # バックグラウンドスレッドで実行する(daemon=Trueなのでアプリ終了時に自動で片付く)
     threading.Thread(target=maybe_run_daily_sleep, daemon=True).start()
     threading.Thread(target=maybe_run_daily_archive_crawl, daemon=True).start()
+    # 夜間修行・自律討論はlaunchd(launchctl load)の有効化を保留しているため、
+    # launchdなしでも1日1回動くよう、他の日次ジョブと同じ仕組みに乗せる
+    threading.Thread(target=maybe_run_daily_study, daemon=True).start()
+    threading.Thread(target=maybe_run_daily_debate_autonomous, daemon=True).start()
 
     # ⚠️ 超重要:server_name="0.0.0.0" にすることで、同じWi-Fiにいる家族のiPhoneからアクセス可能になるよ!
     # share=True にすると、Tailscaleを使わなくても一時的な外部URL(72時間有効)を自動発行してくれるから、最初はこれも便利!

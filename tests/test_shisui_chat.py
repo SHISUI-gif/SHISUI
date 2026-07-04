@@ -50,7 +50,13 @@ def test_stream_shisui_reply_omits_thinking_block_when_absent(monkeypatch):
 
 def test_stream_shisui_reply_retries_without_think_when_model_unsupported(monkeypatch):
     """qwen2.5:32bのような非対応モデルにthink=Trueを渡すとOllamaが400を返す実際の挙動を再現し、
-    自動的にthinkなしで再試行して応答が続くことを検証する。"""
+    自動的にthinkなしで再試行して応答が続くことを検証する。
+
+    実際のOllamaは、この「think非対応」エラーをchat()呼び出し時点ではなく、
+    ストリーミングレスポンスをイテレートし始めた瞬間に遅延して投げてくる。
+    fake_chatの`think=True`ケースをジェネレータの中でraiseすることで、
+    その遅延評価の挙動を正確に再現している(呼び出し時点でraiseする実装だと、
+    この不具合を見逃してしまっていた)。"""
     calls = []
 
     def fake_chat(model, messages, tools=None, stream=False, think=None):
@@ -60,10 +66,10 @@ def test_stream_shisui_reply_retries_without_think_when_model_unsupported(monkey
             return {"message": {"role": "assistant", "content": "CHAT", "tool_calls": None}}
 
         calls.append(think)
-        if think:
-            raise ollama.ResponseError('"qwen2.5:32b" does not support thinking', status_code=400)
 
         def gen():
+            if think:
+                raise ollama.ResponseError('"qwen2.5:32b" does not support thinking', status_code=400)
             yield {"message": {"content": "通常モードで応答するね。"}}
 
         return gen()
@@ -76,7 +82,11 @@ def test_stream_shisui_reply_retries_without_think_when_model_unsupported(monkey
     assert results[-1] == "通常モードで応答するね。"
 
 
-def test_stream_shisui_reply_reraises_other_response_errors(monkeypatch):
+def test_stream_shisui_reply_reraises_other_response_errors(monkeypatch, tmp_path):
+    # stream_shisui_reply()は内部でerror_log.log_error()を呼ぶため、
+    # 本番のエラーログファイルを汚染しないよう必ず隔離する
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+
     def fake_chat(model, messages, tools=None, stream=False, think=None):
         if tools:
             return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
