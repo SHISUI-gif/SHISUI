@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+
+# output/以下は全て実行時に生成されるデータ(会話履歴・記憶DB・コーパスキャッシュ等)。
+# 個人の会話内容やチャットの記憶(hippocampus.sqlite3・neocortex_chroma等)が
+# 含まれるため、リポジトリには一切含めない。
+output/*
+!output/.gitkeep
+
+# Next.jsフロントエンド
+frontend/node_modules/
+frontend/.next/
+frontend/.env*.local
+
+# エラー自己修復の未承認パッチ(人間承認前の生成物なので追跡しない)
+output/evolution/

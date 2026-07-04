@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.shisui.study</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/nayutasato/my-genspark/.venv/bin/python</string>
+        <string>/Users/nayutasato/my-genspark/app.py</string>
+        <string>study</string>
+        <string>run</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/nayutasato/my-genspark</string>
+
+    <!-- 深夜2時に起動。Macが完全スリープ中は発火しない場合がある(その場合は次回起動時に手動 `python app.py study run` で代替可能) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nayutasato/my-genspark/output/study/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nayutasato/my-genspark/output/study/launchd_stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

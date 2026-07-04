@@ -1,0 +1,53 @@
+# ==== 共通 ====
+python-dotenv>=1.0.1
+rich>=13.7.1
+
+# ==== 1. 自律リサーチ機能 ====
+# Web検索API (https://tavily.com/)
+tavily-python>=0.5.0
+# ローカルLLM (Ollama) クライアント。qwen2.5等のQwen系モデルを想定
+ollama>=0.4.7
+
+# ==== 2. 議事録作成機能(話者分離 + 文字起こし + 要約) ====
+# 高速版Whisper (CTranslate2ベース、完全ローカルで動作)
+faster-whisper>=1.1.0
+# 話者分離 (要 HuggingFace アクセストークン)
+pyannote.audio>=3.3.2
+# pyannote / faster-whisper の依存
+torch>=2.2.0
+torchaudio>=2.2.0
+# 音声ファイルの読み込み・前処理 (ffmpegが別途必要)
+pydub>=0.25.1
+soundfile>=0.12.1
+
+# ==== 3. 音声会話(Voice Chat)機能 ====
+# マイク録音 (要 PortAudio。Whisperが要求する16kHzモノラルで直接録音する)
+sounddevice>=0.5.1
+numpy>=1.26.4
+# ローカルTTS。OS標準音声エンジンを使うためモデルDL不要ですぐ動く
+# (より高品質な音声が必要な場合はMeloTTS等に差し替え可能)
+pyttsx3>=2.98
+
+# ==== 4. マルチエージェント討論・学習機能 ====
+# エージェント間の討論フローをステートグラフとして構築する
+langgraph>=0.2.60
+
+# ==== 5. 記憶圧縮システム(Neuro-Memory Architecture) ====
+# 新皮質レイヤー(長期・意味記憶)用のローカルベクトルDB。埋め込みはOllama経由で完全ローカル
+chromadb>=0.5.0
+
+# ==== 6. 文学的感性コーパス(Aozora Bunko) ====
+# 青空文庫のHTMLを解析するためのパーサー (features="html.parser"指定でlxml等は不要)
+beautifulsoup4>=4.12.3
+
+# ==== 7. 夜間修行(Autonomous Study Loop) ====
+# メンターAI(Gemini)呼び出し用。那由多さん自身のAPIキーが必要な唯一の有料外部連携
+google-genai>=0.3.0
+
+# ==== 8. UI用API層(将来のNext.jsフロントエンド向け) ====
+# 志粋の頭脳(src/chat/)をHTTP APIとして公開する。Gradio版とは独立して並行稼働できる
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# ==== 開発・テスト ====
+pytest>=8.3.3
