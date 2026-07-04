@@ -177,11 +177,22 @@ def _stream_shisui_events_inner(
         "時間に関する言及は、必ずこの日付を基準に判断・検索してください。"
     )
 
-    recall_context = memory_context.build_recall_context(user_message, user_id=user_id)
+    # 記憶検索(embeddingモデル)×2・モデル振り分け(分類モデル)は互いの結果に
+    # 依存せず、かつ異なるOllamaモデルプロセスを使うため、ここでまとめて並列実行
+    # する。以前はこの2つのembedding呼び出しが直列で、その後のツール判定との
+    # 並列化ブロックに入る前に完了を待つ必要があったため、合計の待ち時間に
+    # そのまま乗っていた。
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        recall_future = executor.submit(memory_context.build_recall_context, user_message, user_id=user_id)
+        literary_future = executor.submit(literary_context.build_literary_hint, user_message)
+        model_future = executor.submit(route_model, user_message)
+        recall_context = recall_future.result()
+        literary_hint = literary_future.result()
+        model = model_future.result()
+
     if recall_context:
         system_content += "\n\n" + recall_context
 
-    literary_hint = literary_context.build_literary_hint(user_message)
     if literary_hint:
         system_content += "\n\n" + literary_hint
 
@@ -198,20 +209,14 @@ def _stream_shisui_events_inner(
         role="user", content=user_message, source="chat", user_id=user_id, conversation_id=conversation_id
     )
 
-    # 「どのモデルへ振り分けるか」と「検索が必要か」は互いの結果に依存しないため、
-    # 並列に実行して待ち時間を短縮する(直列だと合計6〜8秒かかっていたのがmax()で済む)。
     # ツール判定は振り分け先の大きいモデル(qwen2.5:32b等)ではなく軽量な分類モデルを使う
     # (応答が全く届かない時間が長引くと、Cloudflareトンネル経由で524タイムアウトになるため)。
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        model_future = executor.submit(route_model, user_message)
-        tool_future = executor.submit(
-            ollama.chat,
-            model=settings.router_classifier_model,
-            messages=messages,
-            tools=ALL_TOOL_SCHEMAS,
-        )
-        model = model_future.result()
-        first_response = tool_future.result()
+    # messagesの構築(=記憶検索の結果)に依存するため、上の並列バッチには含められない。
+    first_response = ollama.chat(
+        model=settings.router_classifier_model,
+        messages=messages,
+        tools=ALL_TOOL_SCHEMAS,
+    )
 
     assistant_message = first_response["message"]
     tool_calls = assistant_message["tool_calls"] if "tool_calls" in assistant_message else None
