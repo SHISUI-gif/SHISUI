@@ -27,6 +27,9 @@ STUDY_LOG_FILE = STUDY_DIR / "gemini_usage.log"
 STUDY_SESSIONS_FILE = STUDY_DIR / "sessions.json"
 AOZORA_ARCHIVE_PROGRESS_FILE = CORPUS_DIR / "full_archive_progress.json"
 AOZORA_ARCHIVE_MARKER_FILE = CORPUS_DIR / "last_archive_crawl_date.txt"
+EVOLUTION_DIR = BASE_DIR / "output" / "evolution"
+ERROR_LOG_FILE = EVOLUTION_DIR / "error_log.json"
+PENDING_PATCHES_DIR = EVOLUTION_DIR / "pending"
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -79,6 +82,11 @@ class Settings:
     router_reasoning_model: str = os.getenv("ROUTER_REASONING_MODEL", "deepseek-r1:8b")
     router_chat_model: str = os.getenv("ROUTER_CHAT_MODEL", "qwen3:8b")
 
+    # 自己修復プロトコル(エラー検知→修正案生成→人間承認)。
+    # コーディング特化のローカルモデルを使い、外部API(Gemini)には出さない。
+    evolution_enabled: bool = os.getenv("EVOLUTION_ENABLED", "true").lower() == "true"
+    evolution_fix_model: str = os.getenv("EVOLUTION_FIX_MODEL", "qwen3-coder:30b")
+
 
 settings = Settings()
 
@@ -90,5 +98,6 @@ for directory in (
     CORPUS_DIR,
     RAW_CACHE_DIR,
     STUDY_DIR,
+    PENDING_PATCHES_DIR,
 ):
     directory.mkdir(parents=True, exist_ok=True)

@@ -11,6 +11,7 @@
   study      : 志粋の「夜間修行」(メンターAIとの自律学習)を手動操作する
   api        : 志粋の頭脳をHTTP API(FastAPI)として起動する(将来のNext.jsフロントエンド向け)
   debate-autonomous : 志粋が自分の弱点トピックについて自律的に討論する(夜間修行とは別ジョブ)
+  evolution  : 自己修復プロトコル(エラー検知→修正案生成→人間承認)を操作する
 """
 from __future__ import annotations
 
@@ -216,6 +217,70 @@ def run_debate_autonomous() -> int:
     return 0
 
 
+def run_evolution_scan() -> int:
+    from src.core.evolution import generate_fix_proposals
+
+    console.print("[bold cyan]自己修復プロトコル[/bold cyan]: 未レビューのエラーを確認し、修正案を生成します")
+    proposals = generate_fix_proposals()
+
+    if not proposals:
+        console.print("[yellow]新しい修正案はありませんでした。[/yellow]")
+        return 0
+
+    console.print(f"[bold green]完了[/bold green]: {len(proposals)}件の修正案を生成しました")
+    for proposal in proposals:
+        console.print(f"  [bold]\\[{proposal.id}][/bold] {proposal.file_path} — {proposal.explanation[:60]}")
+    console.print("`python app.py evolution show <id>` で内容を確認できます。")
+    return 0
+
+
+def run_evolution_list() -> int:
+    from src.core.evolution import list_pending_proposals
+
+    proposals = list_pending_proposals()
+    if not proposals:
+        console.print("[yellow]承認待ちの修正案はありません。[/yellow]")
+        return 0
+
+    for proposal in proposals:
+        console.print(f"[bold]\\[{proposal['id']}][/bold] {proposal['file_path']}")
+        console.print(f"  {proposal['explanation']}")
+    return 0
+
+
+def run_evolution_show(proposal_id: str) -> int:
+    from src.core.evolution import get_proposal
+
+    proposal = get_proposal(proposal_id)
+    if proposal is None:
+        console.print(f"[bold red]修正案 {proposal_id} が見つかりません。[/bold red]")
+        return 1
+
+    console.print(f"[bold]ファイル[/bold]: {proposal['file_path']}")
+    console.print(f"[bold]説明[/bold]: {proposal['explanation']}")
+    console.print(proposal["diff"])
+    return 0
+
+
+def run_evolution_apply(proposal_id: str) -> int:
+    from src.core.evolution import apply_proposal
+
+    ok, message = apply_proposal(proposal_id)
+    style = "bold green" if ok else "bold red"
+    console.print(f"[{style}]{message}[/{style}]")
+    return 0 if ok else 1
+
+
+def run_evolution_reject(proposal_id: str) -> int:
+    from src.core.evolution import reject_proposal
+
+    if reject_proposal(proposal_id):
+        console.print(f"[yellow]修正案 {proposal_id} を却下しました。[/yellow]")
+        return 0
+    console.print(f"[bold red]修正案 {proposal_id} が見つかりません。[/bold red]")
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="app.py",
@@ -283,6 +348,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="志粋が自分の弱点トピックについて自律的に討論する(夜間修行とは別ジョブ)",
     )
 
+    evolution_parser = subparsers.add_parser(
+        "evolution", help="自己修復プロトコル(エラー検知→修正案生成→人間承認)を操作する"
+    )
+    evolution_subparsers = evolution_parser.add_subparsers(dest="evolution_command", required=True)
+    evolution_subparsers.add_parser("scan", help="未レビューのエラーから修正案を生成する")
+    evolution_subparsers.add_parser("list", help="承認待ちの修正案を一覧する")
+    evolution_show_parser = evolution_subparsers.add_parser("show", help="修正案の詳細(diff)を表示する")
+    evolution_show_parser.add_argument("id", help="修正案のID")
+    evolution_apply_parser = evolution_subparsers.add_parser(
+        "apply", help="修正案を実ファイルに適用してコミットする(作業ツリーがクリーンな時のみ)"
+    )
+    evolution_apply_parser.add_argument("id", help="修正案のID")
+    evolution_reject_parser = evolution_subparsers.add_parser("reject", help="修正案を却下する")
+    evolution_reject_parser.add_argument("id", help="修正案のID")
+
     return parser
 
 
@@ -322,6 +402,17 @@ def main(argv: list[str] | None = None) -> int:
             return run_api(args.port)
         if args.command == "debate-autonomous":
             return run_debate_autonomous()
+        if args.command == "evolution":
+            if args.evolution_command == "scan":
+                return run_evolution_scan()
+            if args.evolution_command == "list":
+                return run_evolution_list()
+            if args.evolution_command == "show":
+                return run_evolution_show(args.id)
+            if args.evolution_command == "apply":
+                return run_evolution_apply(args.id)
+            if args.evolution_command == "reject":
+                return run_evolution_reject(args.id)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[bold red]エラーが発生しました[/bold red]: {exc}")
         return 1

@@ -20,6 +20,7 @@ from config.settings import settings
 from src.chat.model_router import route_model
 from src.common.persona import SHISUI_SYSTEM_PROMPT
 from src.common.tools import ALL_TOOL_SCHEMAS, AVAILABLE_TOOLS
+from src.core import error_log
 from src.corpus import context as literary_context
 from src.memory import context as memory_context
 from src.memory import hippocampus
@@ -64,6 +65,9 @@ def stream_shisui_events(user_message: str, history: list[dict]) -> Iterator[Cha
     try:
         yield from _stream_shisui_events_inner(user_message, history)
     except Exception as e:  # noqa: BLE001
+        # ユーザーには要点だけを見せつつ、完全なトレースバックは自己修復プロトコル
+        # (src/core/evolution.py)が後で読めるようエラーログに残しておく
+        error_log.log_error(source="stream_shisui_events", exc=e)
         yield ChatEvent(
             type="content",
             text=f"⚠️ エラーが発生しちゃった:{str(e)}\nOllamaが起動しているか、モデル名が正しいか確認してね!",

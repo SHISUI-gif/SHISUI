@@ -7,6 +7,7 @@
 import ollama
 
 from src.chat import shisui_chat
+from src.core import error_log
 
 
 def test_stream_shisui_reply_shows_thinking_when_present(monkeypatch):
@@ -86,3 +87,22 @@ def test_stream_shisui_reply_reraises_other_response_errors(monkeypatch):
     results = list(shisui_chat.stream_shisui_reply("テスト", []))
 
     assert "エラーが発生しちゃった" in results[-1]
+
+
+def test_stream_shisui_reply_logs_unexpected_errors(monkeypatch, tmp_path):
+    """自己修復プロトコルが後で拾えるよう、未処理例外はerror_logにも記録される。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+        raise ollama.ResponseError("model not found", status_code=404)
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    list(shisui_chat.stream_shisui_reply("テスト", []))
+
+    logged = error_log.get_unreviewed_errors()
+    assert len(logged) == 1
+    assert logged[0]["source"] == "stream_shisui_events"
+    assert logged[0]["error_type"] == "ResponseError"
