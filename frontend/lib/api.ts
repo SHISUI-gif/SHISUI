@@ -1,6 +1,13 @@
 import type { ChatMessage, ChatStreamEvent } from "./types"
 
 /**
+ * セッションが無効(未ログイン・トークン失効)だったことを示すエラー。
+ * 呼び出し側はこれを拾って「エラーが発生しちゃった」という生の技術メッセージを
+ * 見せるのではなく、ログイン画面へ戻す(何が起きたか分からない詰み状態を防ぐ)。
+ */
+export class AuthError extends Error {}
+
+/**
  * 志粋のFastAPIバックエンド(/api/chat)へ問い合わせ、NDJSON形式のイベントを
  * 逐次yieldする非同期ジェネレータ。1行が1つのChatStreamEvent(JSON)に対応する。
  *
@@ -32,6 +39,9 @@ export async function* streamChat(
     }),
   })
 
+  if (response.status === 401) {
+    throw new AuthError("セッションが切れました。もう一度ログインしてください。")
+  }
   if (!response.ok || !response.body) {
     throw new Error(`志粋APIへの接続に失敗しました (HTTP ${response.status})`)
   }

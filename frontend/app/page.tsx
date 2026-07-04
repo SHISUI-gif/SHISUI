@@ -9,7 +9,7 @@ import { Sidebar } from "@/components/chat/Sidebar"
 import { StartupLoader } from "@/components/StartupLoader"
 import { AmbientBackground } from "@/components/three/AmbientBackground"
 import { clearAuth, loadAuth, saveAuth } from "@/lib/auth"
-import { streamChat } from "@/lib/api"
+import { AuthError, streamChat } from "@/lib/api"
 import { getConversationMessages, listConversations } from "@/lib/conversations"
 import type { AuthUser, ChatMessage, Conversation } from "@/lib/types"
 import { EASE } from "@/lib/motion"
@@ -89,7 +89,11 @@ export default function Home() {
   }, [user])
 
   const refreshConversations = async (token: string) => {
-    setConversationList(await listConversations(token))
+    try {
+      setConversationList(await listConversations(token))
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
   }
 
   const handleAuthenticated = (authUser: AuthUser) => {
@@ -115,8 +119,12 @@ export default function Home() {
   const handleSelectConversation = async (id: number) => {
     if (!user) return
     setConversationId(id)
-    setMessages(await getConversationMessages(user.token, id))
-    setChatOpen(true)
+    try {
+      setMessages(await getConversationMessages(user.token, id))
+      setChatOpen(true)
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
   }
 
   const handleSend = async (text: string) => {
@@ -153,6 +161,12 @@ export default function Home() {
       // 更新日時が変わっているのでどちらの場合も一覧を再取得しておく
       if (isNewConversation) refreshConversations(user.token)
     } catch (error) {
+      if (error instanceof AuthError) {
+        // 生のHTTPエラーを見せて詰ませるのではなく、ログイン画面に戻して
+        // すぐ再ログインできるようにする(セッション切れは日常的に起こりうる)
+        handleLogout()
+        return
+      }
       setMessages((prev) => {
         const next = [...prev]
         next[next.length - 1] = {
