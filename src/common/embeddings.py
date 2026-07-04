@@ -1,9 +1,13 @@
-"""埋め込みAPIをchromadbのEmbeddingFunctionとして実装したもの。
+"""ローカルOllamaの埋め込みAPIをchromadbのEmbeddingFunctionとして実装したもの。
 
-既定はローカルOllamaで完全ローカルに動作するが、`settings.use_groq`が
-trueの場合はGroqの無料枠embeddings API(`nomic-embed-text-v1_5`、Ollama版と
-同じモデルファミリー)を使う。Macの蓋を閉じても志粋が動けるようにする
-クラウド移行の選択肢のため(config/settings.py参照)。
+`settings.use_groq`が有効な場合でも、埋め込みだけは常にローカルOllamaを使う。
+GroqのPython SDKは`client.embeddings.create()`を公開しており、型ヒント上は
+`nomic-embed-text-v1_5`が使えるように見えるが、実際にこのプロジェクトのAPI
+キーで試したところ404(モデルが存在しない/アクセス権が無い)で失敗することを
+確認済み(`client.models.list()`で確認しても埋め込み系モデルは1つも一覧に
+出てこない)。過去にGroq側へ条件分岐していたことがあり、その状態で移行
+スクリプトを実行して既存の新皮質データを実際に失った事故があったため、
+「Groqのembeddingsは使わない」という判断を後から覆さないこと。
 記憶システム(src/memory/neocortex.py)と文学的感性コーパス(src/corpus/)の
 両方が同じ実装を共有する。
 """
@@ -13,19 +17,16 @@ import ollama
 from chromadb.api.types import Documents, Embeddings, EmbeddingFunction
 
 from config.settings import settings
-from src.common import groq_client
 
 
 class OllamaEmbeddingFunction(EmbeddingFunction[Documents]):
-    """chromadbのEmbeddingFunctionを、Ollama(既定)またはGroqのembeddings APIで実装したもの。"""
+    """chromadbのEmbeddingFunctionを、Ollamaのembeddings APIで実装したもの。"""
 
     def __init__(self, model: str | None = None) -> None:
-        default_model = settings.groq_embed_model if settings.use_groq else settings.ollama_embed_model
-        self.model = model or default_model
+        self.model = model or settings.ollama_embed_model
 
     def __call__(self, input: Documents) -> Embeddings:
-        client = groq_client if settings.use_groq else ollama
-        return [client.embeddings(model=self.model, prompt=text)["embedding"] for text in input]
+        return [ollama.embeddings(model=self.model, prompt=text)["embedding"] for text in input]
 
     @staticmethod
     def name() -> str:

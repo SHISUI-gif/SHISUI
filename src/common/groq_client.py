@@ -88,7 +88,16 @@ def chat(
 
 
 def embeddings(model: str, prompt: str) -> dict:
-    """Ollamaの`ollama.embeddings()`と同じシグネチャ・戻り値の形でGroqを呼ぶ。"""
+    """Ollamaの`ollama.embeddings()`と同じシグネチャ・戻り値の形でGroqを呼ぶ。
+
+    警告: このプロジェクトの実際のAPIキーで検証したところ、GroqのSDKが型ヒント上
+    公開している`nomic-embed-text-v1_5`は404(モデルが存在しない/アクセス権が無い)
+    で失敗した(`client.models.list()`にも埋め込み系モデルは1つも出てこない)。
+    現時点では`src/common/embeddings.py`はGroqを使わず常にOllamaを使う実装に
+    なっている。この関数は将来Groq側でembeddingsが一般提供された場合に備えて
+    残しているだけで、**呼び出し前に実際にモデルが利用可能か`models.list()`で
+    再確認すること**(過去に確認せず使い、新皮質の記憶データを実際に失った事故がある)。
+    """
     client = _get_client()
     response = client.embeddings.create(model=model, input=prompt)
     return {"embedding": response.data[0].embedding}

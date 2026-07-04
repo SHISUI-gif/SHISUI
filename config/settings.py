@@ -93,15 +93,16 @@ class Settings:
     evolution_fix_model: str = os.getenv("EVOLUTION_FIX_MODEL", "qwen3-coder:30b")
 
     # クラウド移行(Macの蓋を閉じても志粋が動き続けられるようにする選択肢)。
-    # trueにすると、chat/embeddingの呼び出しをローカルOllamaではなくGroqの
-    # 無料枠APIへ向ける。Ollamaより非力なサーバー(例: Oracle Cloud Always Free)
-    # でもバックエンドを運用できるようにするための切り替えで、いつでもfalseに
-    # 戻してローカルOllamaのみの運用に戻せる。
+    # trueにすると、chatの呼び出し(生成・モデル振り分け・ツール判定)をローカル
+    # Ollamaではなく Groqの無料枠APIへ向ける。いつでもfalseに戻してローカル
+    # Ollamaのみの運用に戻せる。
+    # 注意: embeddingはこのフラグの対象外(常にローカルOllama)。GroqのSDKは
+    # embeddings.create()を公開しているが、実際のAPIキーで検証した結果
+    # nomic-embed-text-v1_5は404(利用不可)だった(src/common/embeddings.py参照)。
+    # 過去にembeddingもGroq化した状態で移行スクリプトを実行し、新皮質の記憶
+    # データを実際に失った事故があるため、安易にembeddingをGroqへ向けないこと。
     use_groq: bool = os.getenv("USE_GROQ", "false").lower() == "true"
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
-    # GroqのEmbeddings APIはOllamaと同じnomic-embed-textファミリー(v1.5)を提供して
-    # いるため、埋め込みベクトルの傾向が近く、移行時の影響が比較的小さい
-    groq_embed_model: str = os.getenv("GROQ_EMBED_MODEL", "nomic-embed-text-v1_5")
     groq_classifier_model: str = os.getenv("GROQ_CLASSIFIER_MODEL", "llama-3.1-8b-instant")
     groq_coding_model: str = os.getenv("GROQ_CODING_MODEL", "qwen/qwen3-32b")
     groq_reasoning_model: str = os.getenv("GROQ_REASONING_MODEL", "qwen/qwen3-32b")

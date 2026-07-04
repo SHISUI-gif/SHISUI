@@ -1,13 +1,17 @@
 """既存のChromaDBコレクション(新皮質・文学的感性コーパス)を、新しい埋め込み
 モデルで再構築する一度きりの移行スクリプト。
 
-USE_GROQ=trueに切り替える前に、既存のOllama(nomic-embed-text)で埋め込まれた
-ベクトルは、Groq(nomic-embed-text-v1_5)のベクトル空間とは別物として扱う必要が
-ある。埋め込みモデルが変わると類似度検索の前提が崩れるため、既存の全テキストを
-新しい埋め込みで登録し直す。
+埋め込みモデルを切り替える際、既存のベクトルは新しいモデルのベクトル空間とは
+別物として扱う必要がある。埋め込みモデルが変わると類似度検索の前提が崩れる
+ため、既存の全テキストを新しい埋め込みで登録し直す。
 
-実行前に必ず.envのUSE_GROQ・GROQ_API_KEYを目的の値に設定してから実行すること
-(このスクリプトは「今のsettings.use_groqの値」を新しい埋め込みとして使う)。
+**重要: 先に新しいコレクションを完全に構築・検証してから、古いコレクションを
+削除する(delete-then-rebuildではなくbuild-then-swap)。** 以前のバージョンは
+「削除→再登録」の順で実装しており、再登録中にAPI側の問題(例: 指定した
+埋め込みモデルが実際にはアクセスできず404)で失敗し、新皮質のデータを
+実際に失う事故を起こした。二度と同じ事故を起こさないよう、
+新しいコレクションの件数が元と一致することを確認できるまでは、古い
+コレクションには一切手を付けない設計にしている。
 
 使い方:
     python scripts/migrate_embeddings.py
@@ -21,6 +25,8 @@ from config.settings import LITERARY_CHROMA_DIR, NEOCORTEX_DB_DIR, settings
 from src.common.embeddings import OllamaEmbeddingFunction
 
 console = Console()
+
+_TEMP_SUFFIX = "_migrating_tmp"
 
 
 def _migrate_collection(db_dir, collection_name: str) -> None:
@@ -43,23 +49,45 @@ def _migrate_collection(db_dir, collection_name: str) -> None:
 
     console.print(f"{collection_name}: {len(ids)}件を新しい埋め込みで再構築します...")
 
-    client.delete_collection(name=collection_name)
+    temp_name = collection_name + _TEMP_SUFFIX
+    # 前回の失敗で残った同名の一時コレクションがあれば作り直す
+    try:
+        client.delete_collection(name=temp_name)
+    except Exception:  # noqa: BLE001
+        pass
+
     new_collection = client.get_or_create_collection(
-        name=collection_name,
+        name=temp_name,
         embedding_function=OllamaEmbeddingFunction(),
         metadata={"hnsw:space": "cosine"},
     )
-    # 大量件数でも一度に追加できるが、Groq無料枠のレート制限を考慮して
-    # 念のため小さなバッチに分ける
-    batch_size = 20
-    for start in range(0, len(ids), batch_size):
-        end = start + batch_size
-        new_collection.add(
-            ids=ids[start:end], documents=documents[start:end], metadatas=metadatas[start:end]
-        )
-        console.print(f"  {min(end, len(ids))}/{len(ids)}件完了")
 
-    console.print(f"[green]{collection_name}: 完了[/green]")
+    try:
+        batch_size = 20
+        for start in range(0, len(ids), batch_size):
+            end = start + batch_size
+            new_collection.add(
+                ids=ids[start:end], documents=documents[start:end], metadatas=metadatas[start:end]
+            )
+            console.print(f"  {min(end, len(ids))}/{len(ids)}件完了")
+    except Exception as e:  # noqa: BLE001
+        console.print(
+            f"[red]{collection_name}: 新しい埋め込みでの登録に失敗しました。"
+            f"元のコレクションは無傷です。エラー: {e}[/red]"
+        )
+        return
+
+    if new_collection.count() != len(ids):
+        console.print(
+            f"[red]{collection_name}: 件数不一致(元{len(ids)}件 → 新{new_collection.count()}件)。"
+            "元のコレクションは削除せずそのままにします。[/red]"
+        )
+        return
+
+    # ここまで来て初めて、古いコレクションを削除し、一時コレクションを本来の名前に戻す
+    client.delete_collection(name=collection_name)
+    new_collection.modify(name=collection_name)
+    console.print(f"[green]{collection_name}: 完了({len(ids)}件)[/green]")
 
 
 def main() -> None:
