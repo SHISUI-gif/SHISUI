@@ -75,7 +75,7 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
 
   const handleSend = () => {
     const trimmed = value.trim()
-    if ((!trimmed && !attachedFile) || isStreaming) return
+    if (!trimmed && !attachedFile) return
 
     const message = attachedFile
       ? `以下のファイルの内容:\n<file name="${attachedFile.name}">\n${attachedFile.content}\n</file>\n\n${trimmed}`
@@ -153,7 +153,7 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
     recognition.start()
   }
 
-  const canSend = !isStreaming && (value.trim().length > 0 || attachedFile !== null)
+  const canSend = value.trim().length > 0 || attachedFile !== null
 
   return (
     <motion.div
@@ -193,25 +193,25 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isStreaming}
             aria-label="ファイルを添付"
             className={cn(
               "shrink-0 bg-transparent border-none outline-none cursor-pointer",
               "font-mono text-base text-white/30 leading-none",
               "transition-colors hover:text-[#c8ff00]",
-              "disabled:pointer-events-none disabled:opacity-20",
             )}
           >
             +
           </button>
 
+          {/* 生成中でも次のメッセージを入力・送信できるようにする(志粋の応答を
+              読んでいる間も止められたくない、という要望への対応)。生成中は
+              Stopボタンを併せて表示し、今動いている分だけ中断できるようにする。 */}
           <textarea
             ref={textareaRef}
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="志粋にメッセージを送る... (Cmd/Ctrl+Enter、またはEnter2回で送信)"
-            disabled={isStreaming}
             rows={1}
             className={cn(
               "field-sizing-content min-h-0 flex-1 resize-none bg-transparent border-none outline-none",
@@ -220,7 +220,6 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
               "px-0 py-0 text-base leading-relaxed text-white/90 sm:text-sm",
               "placeholder:text-white/25 placeholder:font-mono placeholder:text-xs placeholder:tracking-wider",
               "focus:outline-none focus-visible:outline-none focus-visible:ring-0",
-              "disabled:cursor-not-allowed disabled:opacity-30",
             )}
           />
 
@@ -228,21 +227,19 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
             <button
               type="button"
               onClick={toggleListening}
-              disabled={isStreaming}
               aria-label={isListening ? "音声入力を停止" : "音声入力を開始"}
               className={cn(
                 "shrink-0 bg-transparent border-none outline-none cursor-pointer",
                 "font-mono text-[10px] tracking-[0.25em] uppercase",
                 isListening ? "text-[#c8ff00] animate-pulse" : "text-white/30",
                 "transition-colors hover:text-[#c8ff00]",
-                "disabled:pointer-events-none disabled:opacity-20",
               )}
             >
               Mic
             </button>
           )}
 
-          {isStreaming ? (
+          {isStreaming && (
             <button
               type="button"
               onClick={onStop}
@@ -255,21 +252,20 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
             >
               Stop
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={!canSend}
-              className={cn(
-                "shrink-0 bg-transparent border-none outline-none cursor-pointer",
-                "font-mono text-[10px] tracking-[0.25em] text-white/30 uppercase",
-                "transition-colors hover:text-[#c8ff00]",
-                "focus-visible:outline-none disabled:pointer-events-none disabled:opacity-0",
-              )}
-            >
-              Send
-            </button>
           )}
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={!canSend}
+            className={cn(
+              "shrink-0 bg-transparent border-none outline-none cursor-pointer",
+              "font-mono text-[10px] tracking-[0.25em] text-white/30 uppercase",
+              "transition-colors hover:text-[#c8ff00]",
+              "focus-visible:outline-none disabled:pointer-events-none disabled:opacity-0",
+            )}
+          >
+            Send
+          </button>
         </div>
       </div>
     </motion.div>

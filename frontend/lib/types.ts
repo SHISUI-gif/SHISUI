@@ -4,6 +4,12 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   thinking?: string;
+  /** クライアント側のみで使う、ストリーミング中の吹き出しを一意に識別するID
+   * (複数のメッセージを同時に送信中でも、どの吹き出しを更新すべきか分かるようにする)。
+   * バックエンドとの送受信には使わない。 */
+  _localId?: number;
+  /** この吹き出し固有のツール実行ステータス(例: 「検索中...」)。クライアント側のみ。 */
+  _toolStatus?: string;
 }
 
 export type ChatStreamEvent =

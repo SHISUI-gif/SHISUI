@@ -57,6 +57,11 @@ export function ChatMessage({ message, isStreamingNow }: ChatMessageProps) {
           content={message.content}
           className={isUser ? "text-white/90" : "text-white/60"}
         />
+        {!isUser && isStreamingNow && message._toolStatus && (
+          <p className="mt-1 font-mono text-[10px] tracking-wider text-[#c8ff00]/60 uppercase">
+            {message._toolStatus}
+          </p>
+        )}
       </div>
     </motion.div>
   )

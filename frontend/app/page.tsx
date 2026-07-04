@@ -75,15 +75,19 @@ export default function Home() {
   const [conversationId, setConversationId] = useState<number | null>(null)
   const [conversationList, setConversationList] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [toolStatus, setToolStatus] = useState<string | undefined>(undefined)
+  const [streamingCount, setStreamingCount] = useState(0)
   const [chatOpen, setChatOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [avatarItems, setAvatarItems] = useState<AvatarItem[]>([])
   const [activityLogOpen, setActivityLogOpen] = useState(false)
   const [activities, setActivities] = useState<ActivityEntry[]>([])
   const [ready, setReady] = useState(false)
-  const abortControllerRef = useRef<AbortController | null>(null)
+  // 生成中でも次のメッセージを送れるようにするため、単一のAbortController
+  // ではなく「今動いている全リクエスト」をSetで管理する。Stopは動いている
+  // 全部を一括で中断する(個別の吹き出しごとの停止ボタンは持たない設計)。
+  const activeControllersRef = useRef<Set<AbortController>>(new Set())
+  const nextLocalIdRef = useRef(0)
+  const conversationIdRef = useRef<number | null>(null)
   const touchStartYRef = useRef<number | null>(null)
 
   // ヒーロー画面を上にスワイプ(スマホ)または上にスクロール(トラックパッド/ホイール)
@@ -147,12 +151,14 @@ export default function Home() {
     clearAuth()
     setUser(null)
     setChatOpen(false)
+    conversationIdRef.current = null
     setConversationId(null)
     setConversationList([])
     setMessages([])
   }
 
   const handleNewConversation = () => {
+    conversationIdRef.current = null
     setConversationId(null)
     setMessages([])
     setChatOpen(true)
@@ -170,6 +176,7 @@ export default function Home() {
 
   const handleSelectConversation = async (id: number) => {
     if (!user) return
+    conversationIdRef.current = id
     setConversationId(id)
     try {
       setMessages(await getConversationMessages(user.token, id))
@@ -180,42 +187,54 @@ export default function Home() {
   }
 
   const handleStop = () => {
-    // 誤送信・送信取り消し用。ストリーミング中のfetchを中断する
-    // (それまでに届いていた内容はメッセージとしてそのまま残す)
-    abortControllerRef.current?.abort()
+    // 誤送信・送信取り消し用。今動いている全リクエストを中断する
+    // (個別の吹き出しごとの停止は持たず、まとめて止める設計。それまでに
+    // 届いていた内容はメッセージとしてそのまま残す)
+    for (const controller of activeControllersRef.current) {
+      controller.abort()
+    }
   }
 
   const handleSend = async (text: string) => {
     if (!user) return
+    // 生成中でも次のメッセージを送れるようにするため、「配列の最後の要素」ではなく
+    // このメッセージ固有のlocalIdで吹き出しを識別する(複数のストリームが同時に
+    // 走っていても、正しい吹き出しだけを更新できるようにするため)。
+    const localId = nextLocalIdRef.current++
     const userMessage: ChatMessage = { role: "user", content: text }
-    setMessages((prev) => [...prev, userMessage, { role: "assistant", content: "", thinking: "" }])
-    setIsStreaming(true)
-    setToolStatus(undefined)
+    const assistantPlaceholder: ChatMessage = { role: "assistant", content: "", thinking: "", _localId: localId }
+    setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
+    setStreamingCount((prev) => prev + 1)
 
-    const isNewConversation = conversationId === null
+    // 新規会話かどうかは、送信した瞬間のconversationIdRefで判定する(React stateの
+    // 反映を待つとレースになるため)。ほぼ同時に2通「新規会話」を送った場合、
+    // 2件目が1件目のconversation_id確定より先に評価されると別々の会話になって
+    // しまう可能性はあるが、通常の人間の操作速度ではまず起きない
+    const isNewConversation = conversationIdRef.current === null
+    const requestConversationId = conversationIdRef.current
+    const requestHistory = messages
     const controller = new AbortController()
-    abortControllerRef.current = controller
+    activeControllersRef.current.add(controller)
 
     try {
-      for await (const event of streamChat(text, messages, user.token, conversationId, controller.signal)) {
-        if (conversationId === null) {
+      for await (const event of streamChat(text, requestHistory, user.token, requestConversationId, controller.signal)) {
+        if (conversationIdRef.current === null) {
+          conversationIdRef.current = event.conversation_id
           setConversationId(event.conversation_id)
         }
-        if (event.type === "tool_status") {
-          setToolStatus(event.text)
-          continue
-        }
-        setToolStatus(undefined)
-        setMessages((prev) => {
-          const next = [...prev]
-          const last = next[next.length - 1]
-          if (event.type === "thinking") {
-            next[next.length - 1] = { ...last, thinking: (last.thinking ?? "") + event.text }
-          } else if (event.type === "content") {
-            next[next.length - 1] = { ...last, content: last.content + event.text }
-          }
-          return next
-        })
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m._localId !== localId) return m
+            if (event.type === "tool_status") return { ...m, _toolStatus: event.text }
+            if (event.type === "thinking") {
+              return { ...m, thinking: (m.thinking ?? "") + event.text, _toolStatus: undefined }
+            }
+            if (event.type === "content") {
+              return { ...m, content: m.content + event.text, _toolStatus: undefined }
+            }
+            return m
+          }),
+        )
       }
       // 新しい会話ならサイドバーの一覧に追加、既存の会話ならタイトルの
       // 更新日時が変わっているのでどちらの場合も一覧を再取得しておく
@@ -231,26 +250,29 @@ export default function Home() {
         // 誤送信を止めた場合。エラーとしては見せず、それまで届いた分だけ残す
         // (何も届いていなければ空の吹き出しを消す)
         setMessages((prev) => {
-          const last = prev[prev.length - 1]
-          if (last && last.role === "assistant" && !last.content && !last.thinking) {
-            return prev.slice(0, -1)
+          const target = prev.find((m) => m._localId === localId)
+          if (target && target.role === "assistant" && !target.content && !target.thinking) {
+            return prev.filter((m) => m._localId !== localId)
           }
           return prev
         })
         return
       }
-      setMessages((prev) => {
-        const next = [...prev]
-        next[next.length - 1] = {
-          ...next[next.length - 1],
-          content: `⚠️ エラーが発生しちゃった: ${(error as Error).message}`,
-        }
-        return next
-      })
+      setMessages((prev) =>
+        prev.map((m) =>
+          m._localId === localId
+            ? { ...m, content: `⚠️ エラーが発生しちゃった: ${(error as Error).message}` }
+            : m,
+        ),
+      )
     } finally {
-      abortControllerRef.current = null
-      setIsStreaming(false)
-      setToolStatus(undefined)
+      activeControllersRef.current.delete(controller)
+      setStreamingCount((prev) => prev - 1)
+      // ストリーミング終了の目印として_localIdを外す(この値自体がChatMessages側の
+      // 「このメッセージは今生成中か」の判定に使われている)
+      setMessages((prev) =>
+        prev.map((m) => (m._localId === localId ? { ...m, _localId: undefined } : m)),
+      )
     }
   }
 
@@ -428,16 +450,14 @@ export default function Home() {
               </p>
             </motion.header>
 
-            {hasMessages && (
-              <ChatMessages messages={messages} toolStatus={toolStatus} isStreaming={isStreaming} />
-            )}
+            {hasMessages && <ChatMessages messages={messages} />}
 
             {!hasMessages && <div className="flex-1" />}
 
             <FloatingInput
               onSend={handleSend}
               onStop={handleStop}
-              isStreaming={isStreaming}
+              isStreaming={streamingCount > 0}
               autoFocus
             />
           </motion.div>

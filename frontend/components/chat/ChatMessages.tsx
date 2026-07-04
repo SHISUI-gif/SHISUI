@@ -5,16 +5,22 @@ import { ChatMessage } from "./ChatMessage"
 
 interface ChatMessagesProps {
   messages: ChatMessageType[]
-  toolStatus?: string
-  isStreaming?: boolean
 }
 
-export function ChatMessages({ messages, toolStatus, isStreaming }: ChatMessagesProps) {
+/**
+ * 生成中でも次のメッセージを送れるようにしたため、「配列の最後の要素だけが
+ * ストリーミング中」とは限らない。各メッセージ自身の_localIdが振られているか
+ * (=まだ完了していないアシスタント発言か)で、メッセージごとにストリーミング中かを判定する。
+ * 完了した発言からは呼び出し側(app/page.tsx)が_localIdを外さないため、
+ * 代わりにcontentの有無だけでなく「_localIdが付いている」ことそのものを
+ * ストリーミング中の目印として扱う。
+ */
+export function ChatMessages({ messages }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, toolStatus])
+  }, [messages])
 
   return (
     <ScrollArea className="flex-1 w-full">
@@ -23,12 +29,9 @@ export function ChatMessages({ messages, toolStatus, isStreaming }: ChatMessages
           <ChatMessage
             key={index}
             message={message}
-            isStreamingNow={Boolean(isStreaming) && index === messages.length - 1}
+            isStreamingNow={message._localId !== undefined}
           />
         ))}
-        {toolStatus && (
-          <p className="font-mono text-[10px] tracking-wider text-[#c8ff00]/60 uppercase">{toolStatus}</p>
-        )}
         <div ref={bottomRef} />
       </div>
     </ScrollArea>
