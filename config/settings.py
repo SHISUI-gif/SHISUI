@@ -33,6 +33,8 @@ FEEDBACK_LOG_FILE = EVOLUTION_DIR / "feedback_log.json"
 PENDING_PATCHES_DIR = EVOLUTION_DIR / "pending"
 STUDY_MARKER_FILE = STUDY_DIR / "last_study_date.txt"
 DEBATE_AUTONOMOUS_MARKER_FILE = DEBATE_DIR / "last_autonomous_debate_date.txt"
+ACTIVITY_DIR = BASE_DIR / "output" / "activity"
+ACTIVITY_LOG_FILE = ACTIVITY_DIR / "activity_log.json"
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -102,5 +104,6 @@ for directory in (
     RAW_CACHE_DIR,
     STUDY_DIR,
     PENDING_PATCHES_DIR,
+    ACTIVITY_DIR,
 ):
     directory.mkdir(parents=True, exist_ok=True)

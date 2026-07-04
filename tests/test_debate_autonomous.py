@@ -8,6 +8,7 @@ import hashlib
 import ollama
 import pytest
 
+from src.core import activity_log
 from src.debate import autonomous, debate_agent, feedback_store
 from src.memory import hippocampus, neocortex
 from src.study import report as study_report
@@ -37,6 +38,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(neocortex, "NEOCORTEX_DB_DIR", tmp_path / "neocortex_chroma")
     monkeypatch.setattr(debate_agent, "DEBATE_DIR", tmp_path)
     monkeypatch.setattr(study_report, "STUDY_SESSIONS_FILE", tmp_path / "sessions.json")
+    monkeypatch.setattr(activity_log, "ACTIVITY_LOG_FILE", tmp_path / "activity_log.json")
     monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
     yield
 

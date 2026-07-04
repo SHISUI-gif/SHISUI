@@ -12,6 +12,7 @@ from datetime import datetime
 
 from config.settings import STUDY_SESSIONS_FILE, settings
 from src.common.llm_client import OllamaClient
+from src.core import activity_log
 from src.memory import neocortex
 from src.study import weakness_finder
 from src.study.mentor_client import GeminiClient
@@ -100,6 +101,11 @@ def run_study_session(
         result.gemini_calls += settings.study_dialogue_turns
 
     _save_session_log(result)
+    activity_log.log_activity(
+        kind="study",
+        summary=f"夜間修行: {len(result.topics_studied)}件のトピックを学んだ",
+        details={"topics": [t.topic for t in result.topics_studied]},
+    )
     return result
 
 

@@ -23,3 +23,16 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
 }
+
+export interface AvatarItem {
+  slug: string;
+  display_name: string;
+  asset: string;
+}
+
+export interface ActivityEntry {
+  timestamp: string;
+  kind: "sleep" | "study" | "debate";
+  summary: string;
+  details: Record<string, unknown>;
+}

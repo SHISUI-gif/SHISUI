@@ -16,10 +16,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.chat.shisui_chat import stream_shisui_events
-from src.core import auth
+from src.core import activity_log, auth
 from src.corpus.scheduler import maybe_run_daily_archive_crawl
 from src.debate.scheduler import maybe_run_daily_debate_autonomous
-from src.memory import conversations
+from src.memory import avatar, conversations
+from src.memory.avatar_catalog import AVATAR_CATALOG
 from src.memory.scheduler import maybe_run_daily_sleep
 from src.study.scheduler import maybe_run_daily_study
 
@@ -125,6 +126,34 @@ def get_conversation_messages(
     (conversations.get_messages()内のuser_id一致チェックによる)。"""
     user_id = _require_user_id(authorization)
     return conversations.get_messages(conversation_id, user_id)
+
+
+@app.get("/api/avatar")
+def get_avatar(authorization: str | None = Header(None)) -> dict:
+    """ログイン中のユーザーが解除済みのアバターアイテム一覧を返す。
+
+    カタログ(表示名・アセットファイル名)ごと返すことで、フロント側が
+    src/memory/avatar_catalog.pyの内容を二重管理しなくて済むようにする。
+    """
+    user_id = _require_user_id(authorization)
+    unlocked_slugs = set(avatar.get_unlocked_slugs(user_id))
+    unlocked_items = [
+        {"slug": item.slug, "display_name": item.display_name, "asset": item.asset}
+        for item in AVATAR_CATALOG
+        if item.slug in unlocked_slugs
+    ]
+    return {"unlocked_items": unlocked_items}
+
+
+@app.get("/api/activity")
+def get_activity(authorization: str | None = Header(None)) -> dict:
+    """志粋の自律活動(睡眠モード・夜間修行・自律討論)の直近ログを返す。
+
+    特定の友達に紐づくものではなく志粋自身の活動なので、認証は必須だが
+    ログイン中のどのユーザーにも同じ内容を返す。
+    """
+    _require_user_id(authorization)
+    return {"activities": activity_log.get_recent_activity()}
 
 
 @app.post("/api/chat")

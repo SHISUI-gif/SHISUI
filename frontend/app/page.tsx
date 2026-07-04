@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, type TouchEvent, type WheelEvent } from "react"
 import { AnimatePresence, motion } from "framer-motion"
+import { AvatarDisplay } from "@/components/AvatarDisplay"
 import { LoginForm } from "@/components/auth/LoginForm"
+import { ActivityLog } from "@/components/chat/ActivityLog"
 import { ChatMessages } from "@/components/chat/ChatMessages"
 import { FloatingInput } from "@/components/chat/FloatingInput"
 import { Sidebar } from "@/components/chat/Sidebar"
@@ -10,8 +12,10 @@ import { StartupLoader } from "@/components/StartupLoader"
 import { AmbientBackground } from "@/components/three/AmbientBackground"
 import { clearAuth, loadAuth, saveAuth } from "@/lib/auth"
 import { AuthError, streamChat } from "@/lib/api"
+import { getRecentActivity } from "@/lib/activity"
+import { getAvatarState } from "@/lib/avatar"
 import { getConversationMessages, listConversations } from "@/lib/conversations"
-import type { AuthUser, ChatMessage, Conversation } from "@/lib/types"
+import type { ActivityEntry, AuthUser, AvatarItem, ChatMessage, Conversation } from "@/lib/types"
 import { EASE } from "@/lib/motion"
 
 const staggerContainer = {
@@ -75,6 +79,9 @@ export default function Home() {
   const [toolStatus, setToolStatus] = useState<string | undefined>(undefined)
   const [chatOpen, setChatOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [avatarItems, setAvatarItems] = useState<AvatarItem[]>([])
+  const [activityLogOpen, setActivityLogOpen] = useState(false)
+  const [activities, setActivities] = useState<ActivityEntry[]>([])
   const [ready, setReady] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const touchStartYRef = useRef<number | null>(null)
@@ -114,6 +121,15 @@ export default function Home() {
     if (user) refreshConversations(user.token)
   }, [user])
 
+  useEffect(() => {
+    if (!user) return
+    getAvatarState(user.token)
+      .then(setAvatarItems)
+      .catch((error) => {
+        if (error instanceof AuthError) handleLogout()
+      })
+  }, [user])
+
   const refreshConversations = async (token: string) => {
     try {
       setConversationList(await listConversations(token))
@@ -140,6 +156,16 @@ export default function Home() {
     setConversationId(null)
     setMessages([])
     setChatOpen(true)
+  }
+
+  const handleOpenActivityLog = async () => {
+    if (!user) return
+    try {
+      setActivities(await getRecentActivity(user.token))
+      setActivityLogOpen(true)
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
   }
 
   const handleSelectConversation = async (id: number) => {
@@ -315,14 +341,17 @@ export default function Home() {
               AI
             </motion.span>
 
-            <motion.p
-              className="relative z-10 mt-8 px-6 text-center font-mono text-sm text-white/50 sm:text-base"
-              initial={ready ? { opacity: 0, y: 16 } : false}
-              animate={ready ? { opacity: 1, y: 0 } : undefined}
-              transition={{ duration: 0.8, ease: EASE, delay: 0.9 }}
-            >
-              {user.name}さん、今日は何を話そうか?
-            </motion.p>
+            <div className="relative z-10 mt-8 flex flex-col items-center gap-4 px-6">
+              <AvatarDisplay unlockedItems={avatarItems} />
+              <motion.p
+                className="text-center font-mono text-sm text-white/50 sm:text-base"
+                initial={ready ? { opacity: 0, y: 16 } : false}
+                animate={ready ? { opacity: 1, y: 0 } : undefined}
+                transition={{ duration: 0.8, ease: EASE, delay: 0.9 }}
+              >
+                {user.name}さん、今日は何を話そうか?
+              </motion.p>
+            </div>
 
             <motion.button
               type="button"
@@ -360,7 +389,13 @@ export default function Home() {
               activeConversationId={conversationId}
               onSelectConversation={handleSelectConversation}
               onNewConversation={handleNewConversation}
+              onOpenActivityLog={handleOpenActivityLog}
               onLogout={handleLogout}
+            />
+            <ActivityLog
+              isOpen={activityLogOpen}
+              onClose={() => setActivityLogOpen(false)}
+              activities={activities}
             />
 
             <motion.header

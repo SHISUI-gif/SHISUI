@@ -12,6 +12,7 @@ from datetime import date
 from rich.console import Console
 
 from config.settings import SLEEP_MARKER_FILE
+from src.core import activity_log
 from src.memory.sleep import run_sleep_cycle
 
 console = Console()
@@ -43,6 +44,20 @@ def maybe_run_daily_sleep() -> None:
             console.print(
                 f"[dim]💤 睡眠モード実行: エピソード{result.episodes_considered}件を統合、"
                 f"新規/更新メモリ{result.memories_added}件[/dim]"
+            )
+            activity_log.log_activity(
+                kind="sleep",
+                summary=(
+                    f"睡眠モード: エピソード{result.episodes_considered}件を統合、"
+                    f"新規/更新メモリ{result.memories_added}件、"
+                    f"アバターアイテム{result.items_unlocked}件解除"
+                ),
+                details={
+                    "episodes_considered": result.episodes_considered,
+                    "memories_added": result.memories_added,
+                    "memories_superseded": result.memories_superseded,
+                    "items_unlocked": result.items_unlocked,
+                },
             )
     except Exception as exc:  # noqa: BLE001
         console.print(f"[yellow]睡眠モードの自動実行に失敗しました(会話は続行します): {exc}[/yellow]")

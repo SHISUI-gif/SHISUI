@@ -13,6 +13,7 @@ interface SidebarProps {
   activeConversationId: number | null
   onSelectConversation: (id: number) => void
   onNewConversation: () => void
+  onOpenActivityLog: () => void
   onLogout: () => void
 }
 
@@ -34,6 +35,7 @@ export function Sidebar({
   activeConversationId,
   onSelectConversation,
   onNewConversation,
+  onOpenActivityLog,
   onLogout,
 }: SidebarProps) {
   return (
@@ -97,6 +99,16 @@ export function Sidebar({
             </div>
 
             <div className="border-t border-white/10 p-4">
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenActivityLog()
+                  onClose()
+                }}
+                className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
+              >
+                活動ログ
+              </button>
               <p className="truncate font-mono text-xs text-white/40">{userName}</p>
               <button
                 type="button"

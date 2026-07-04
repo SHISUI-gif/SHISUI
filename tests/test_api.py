@@ -12,9 +12,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api import main
-from src.core import auth
+from src.core import activity_log, auth
 from src.corpus import ingest as literary_ingest
-from src.memory import conversations, hippocampus, neocortex
+from src.memory import avatar, conversations, hippocampus, neocortex
 
 
 def _fake_embeddings(model: str, prompt: str) -> dict:
@@ -28,8 +28,10 @@ def _isolate_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(auth, "HIPPOCAMPUS_DB_PATH", db_path)
     monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", db_path)
     monkeypatch.setattr(conversations, "HIPPOCAMPUS_DB_PATH", db_path)
+    monkeypatch.setattr(avatar, "HIPPOCAMPUS_DB_PATH", db_path)
     monkeypatch.setattr(neocortex, "NEOCORTEX_DB_DIR", tmp_path / "neocortex_chroma")
     monkeypatch.setattr(literary_ingest, "LITERARY_CHROMA_DIR", tmp_path / "literary_chroma")
+    monkeypatch.setattr(activity_log, "ACTIVITY_LOG_FILE", tmp_path / "activity_log.json")
     monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
 
 
@@ -216,3 +218,83 @@ def test_concurrent_chat_requests_queue_instead_of_hanging_silently(client, monk
 
     assert "最初の返信" in results["first"]
     assert "順番待ち中" in results["second"]
+
+
+def test_avatar_requires_auth(client):
+    response = client.get("/api/avatar")
+    assert response.status_code == 401
+
+
+def test_avatar_returns_empty_for_new_user(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+
+    response = client.get("/api/avatar", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == {"unlocked_items": []}
+
+
+def test_avatar_returns_unlocked_items_with_catalog_metadata(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    body = register.json()
+    avatar.unlock_item(body["user_id"], "bookish_glasses")
+
+    response = client.get("/api/avatar", headers={"Authorization": f"Bearer {body['token']}"})
+
+    unlocked = response.json()["unlocked_items"]
+    assert len(unlocked) == 1
+    assert unlocked[0]["slug"] == "bookish_glasses"
+    assert unlocked[0]["display_name"] == "読書メガネ"
+    assert unlocked[0]["asset"] == "bookish_glasses.svg"
+
+
+def test_avatar_items_are_scoped_per_user(client):
+    user1 = client.post("/api/auth/register", json={"name": "ユーザー1", "password": "pw1"}).json()
+    user2 = client.post("/api/auth/register", json={"name": "ユーザー2", "password": "pw2"}).json()
+    avatar.unlock_item(user1["user_id"], "chef_hat")
+
+    user1_avatar = client.get(
+        "/api/avatar", headers={"Authorization": f"Bearer {user1['token']}"}
+    ).json()
+    user2_avatar = client.get(
+        "/api/avatar", headers={"Authorization": f"Bearer {user2['token']}"}
+    ).json()
+
+    assert len(user1_avatar["unlocked_items"]) == 1
+    assert user2_avatar["unlocked_items"] == []
+
+
+def test_activity_requires_auth(client):
+    response = client.get("/api/activity")
+    assert response.status_code == 401
+
+
+def test_activity_returns_recent_log_entries(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+    activity_log.log_activity(kind="sleep", summary="睡眠モードのテスト実行")
+
+    response = client.get("/api/activity", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    activities = response.json()["activities"]
+    assert len(activities) == 1
+    assert activities[0]["kind"] == "sleep"
+    assert activities[0]["summary"] == "睡眠モードのテスト実行"
+
+
+def test_activity_is_shared_across_users_not_scoped(client):
+    """活動ログは特定の友達のものではなく志粋自身の活動なので、誰がログインしても同じ内容が見える。"""
+    user1 = client.post("/api/auth/register", json={"name": "ユーザー1", "password": "pw1"}).json()
+    user2 = client.post("/api/auth/register", json={"name": "ユーザー2", "password": "pw2"}).json()
+    activity_log.log_activity(kind="study", summary="夜間修行のテスト実行")
+
+    user1_view = client.get(
+        "/api/activity", headers={"Authorization": f"Bearer {user1['token']}"}
+    ).json()
+    user2_view = client.get(
+        "/api/activity", headers={"Authorization": f"Bearer {user2['token']}"}
+    ).json()
+
+    assert user1_view == user2_view

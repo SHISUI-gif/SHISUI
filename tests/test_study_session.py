@@ -9,6 +9,7 @@ import json
 import ollama
 import pytest
 
+from src.core import activity_log
 from src.debate import feedback_store
 from src.memory import hippocampus, neocortex
 from src.study import study_session, weakness_finder
@@ -43,6 +44,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(feedback_store, "FEEDBACK_FILE", tmp_path / "feedback_history.json")
     monkeypatch.setattr(neocortex, "NEOCORTEX_DB_DIR", tmp_path / "neocortex_chroma")
     monkeypatch.setattr(study_session, "STUDY_SESSIONS_FILE", tmp_path / "sessions.json")
+    monkeypatch.setattr(activity_log, "ACTIVITY_LOG_FILE", tmp_path / "activity_log.json")
     monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
     yield
 

@@ -10,7 +10,7 @@ import json
 import ollama
 import pytest
 
-from src.memory import hippocampus, neocortex, sleep
+from src.memory import avatar, hippocampus, neocortex, sleep
 
 
 class FakeLLM:
@@ -29,7 +29,9 @@ def _fake_embeddings(model: str, prompt: str) -> dict:
 
 @pytest.fixture(autouse=True)
 def _isolate_storage(tmp_path, monkeypatch):
-    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    db_path = tmp_path / "hippocampus.sqlite3"
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", db_path)
+    monkeypatch.setattr(avatar, "HIPPOCAMPUS_DB_PATH", db_path)
     monkeypatch.setattr(neocortex, "NEOCORTEX_DB_DIR", tmp_path / "neocortex_chroma")
     monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
     yield
@@ -127,3 +129,50 @@ def test_recall_context_does_not_leak_across_users():
 
     recall = context.build_recall_context("ユーザー1の秘密の趣味はプラモデル", user_id=2)
     assert recall == ""
+
+
+class _AvatarAwareFakeLLM:
+    """記憶抽出プロンプトとアバター解除判定プロンプトを区別して別の応答を返すフェイク。"""
+
+    def chat(self, system_prompt, user_prompt, temperature=0.3):
+        if "アバター解除判定" in system_prompt:
+            return json.dumps(["bookish_glasses"])
+        return json.dumps([])  # 記憶抽出は今回のテストでは使わない
+
+
+def test_run_sleep_cycle_unlocks_avatar_item_matching_conversation_theme():
+    hippocampus.log_episode(role="user", content="最近読んだ本の話をしたい", source="chat", user_id=1)
+
+    result = sleep.run_sleep_cycle(llm=_AvatarAwareFakeLLM())
+
+    assert result.items_unlocked == 1
+    assert avatar.get_unlocked_slugs(1) == ["bookish_glasses"]
+
+
+def test_run_sleep_cycle_does_not_unlock_already_unlocked_item_twice():
+    hippocampus.log_episode(role="user", content="最近読んだ本の話をしたい", source="chat", user_id=1)
+    sleep.run_sleep_cycle(llm=_AvatarAwareFakeLLM())
+
+    hippocampus.log_episode(role="user", content="また本の話をしたい", source="chat", user_id=1)
+    result = sleep.run_sleep_cycle(llm=_AvatarAwareFakeLLM())
+
+    assert result.items_unlocked == 0
+    assert avatar.get_unlocked_slugs(1) == ["bookish_glasses"]
+
+
+def test_run_sleep_cycle_avatar_unlocks_are_scoped_per_user():
+    hippocampus.log_episode(role="user", content="最近読んだ本の話をしたい", source="chat", user_id=1)
+    hippocampus.log_episode(role="user", content="今日の天気の話", source="chat", user_id=2)
+
+    class PerUserAvatarLLM:
+        def chat(self, system_prompt, user_prompt, temperature=0.3):
+            if "アバター解除判定" not in system_prompt:
+                return json.dumps([])
+            if "本" in user_prompt:
+                return json.dumps(["bookish_glasses"])
+            return json.dumps([])
+
+    sleep.run_sleep_cycle(llm=PerUserAvatarLLM())
+
+    assert avatar.get_unlocked_slugs(1) == ["bookish_glasses"]
+    assert avatar.get_unlocked_slugs(2) == []
