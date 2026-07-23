@@ -176,3 +176,21 @@ def test_run_sleep_cycle_avatar_unlocks_are_scoped_per_user():
 
     assert avatar.get_unlocked_slugs(1) == ["bookish_glasses"]
     assert avatar.get_unlocked_slugs(2) == []
+
+
+def test_run_sleep_cycle_unlocks_avatar_item_from_earlier_day_not_just_today():
+    """「その日話した内容だけ」だと、話題が今日以外の日に出ていた場合に永久に
+    チャンスを逃していた(友達が何日経っても素体のまま、という報告への対応)。
+    前回のサイクルで既に統合済みになった本の話が、今日の別の話題の睡眠サイクル
+    でも引き続き解除候補として拾われる(lookback窓内であれば)ことを検証する。"""
+    old_episode_id = hippocampus.log_episode(
+        role="user", content="最近読んだ本の話をしたい", source="chat", user_id=1
+    )
+    hippocampus.mark_consolidated([old_episode_id])
+
+    hippocampus.log_episode(role="user", content="今日は天気の話をしたい", source="chat", user_id=1)
+
+    result = sleep.run_sleep_cycle(llm=_AvatarAwareFakeLLM())
+
+    assert result.items_unlocked == 1
+    assert avatar.get_unlocked_slugs(1) == ["bookish_glasses"]

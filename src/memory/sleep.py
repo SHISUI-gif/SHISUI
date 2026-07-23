@@ -61,15 +61,26 @@ def _extract_json_array(raw_text: str) -> list[dict]:
     return parsed if isinstance(parsed, list) else []
 
 
-def _maybe_unlock_avatar_items(llm: OllamaClient, user_id: int, transcript: str) -> int:
-    """その日の会話テーマに応じて、まだ解除していないアバターアイテムを解除する。
+def _maybe_unlock_avatar_items(llm: OllamaClient, user_id: int) -> int:
+    """直近数日分の会話テーマに応じて、まだ解除していないアバターアイテムを解除する。
 
+    「その日の会話だけ」を見ていると、話題がたまたま1日に集中しなかった場合に
+    永久にチャンスを逃していた(友達によっては何日経っても素体のまま、という
+    報告を受けての改修)。settings.avatar_unlock_lookback_days日分の履歴
+    (統合済み/未統合を問わない)を毎回まとめて見るようにする。
     候補が1つも無ければ(=全アイテム解除済みなら)LLMを呼ばずに0を返す。
     """
     unlocked_slugs = set(avatar.get_unlocked_slugs(user_id))
     locked_items = [item for item in AVATAR_CATALOG if item.slug not in unlocked_slugs]
     if not locked_items:
         return 0
+
+    recent_episodes = hippocampus.get_recent_episodes(user_id, settings.avatar_unlock_lookback_days)
+    if not recent_episodes:
+        return 0
+    transcript = "\n".join(
+        f"[{e.timestamp}] {e.role}({e.source}): {e.content}" for e in recent_episodes
+    )
 
     candidates = "\n".join(f"- {item.slug}: {item.theme_hint}" for item in locked_items)
     raw_response = llm.chat(AVATAR_SYSTEM_PROMPT.format(candidates=candidates), transcript)
@@ -131,7 +142,7 @@ def run_sleep_cycle(llm: OllamaClient | None = None) -> SleepCycleResult:
             neocortex.add_memory(text, category, episode_ids, user_id=user_id)
             memories_added += 1
 
-        items_unlocked += _maybe_unlock_avatar_items(llm, user_id, transcript)
+        items_unlocked += _maybe_unlock_avatar_items(llm, user_id)
 
     all_episode_ids = [e.id for e in episodes]
     hippocampus.mark_consolidated(all_episode_ids)

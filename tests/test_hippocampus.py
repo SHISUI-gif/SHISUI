@@ -143,3 +143,49 @@ def test_get_recent_mood_is_scoped_per_user(monkeypatch, tmp_path):
 
     assert hippocampus.get_recent_mood(1) == "SAD"
     assert hippocampus.get_recent_mood(2) == "HAPPY"
+
+
+def test_get_recent_episodes_is_scoped_per_user(monkeypatch, tmp_path):
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+
+    hippocampus.log_episode(role="user", content="ユーザー1の発言", source="chat", user_id=1)
+    hippocampus.log_episode(role="user", content="ユーザー2の発言", source="chat", user_id=2)
+
+    user1_episodes = hippocampus.get_recent_episodes(1, days=3)
+    assert len(user1_episodes) == 1
+    assert user1_episodes[0].content == "ユーザー1の発言"
+
+
+def test_get_recent_episodes_includes_already_consolidated_episodes(monkeypatch, tmp_path):
+    """アバター解除判定は複数日にまたがる話題を拾うため、統合済み(consolidated)の
+    エピソードも対象に含める必要がある(get_unconsolidated_episodesとの違い)。"""
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+
+    episode_id = hippocampus.log_episode(role="user", content="昨日の発言", source="chat", user_id=1)
+    hippocampus.mark_consolidated([episode_id])
+
+    episodes = hippocampus.get_recent_episodes(1, days=3)
+    assert len(episodes) == 1
+    assert episodes[0].consolidated is True
+
+
+def test_get_recent_episodes_excludes_entries_older_than_the_window(monkeypatch, tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "hippocampus.sqlite3"
+    monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", db_path)
+
+    hippocampus.log_episode(role="user", content="今日の発言", source="chat", user_id=1)
+
+    # 保持期間より古い(10日前の)発言を直接挿入する
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO episodes (timestamp, role, content, source, user_id) VALUES (?, ?, ?, ?, ?)",
+        ("2020-01-01T00:00:00", "user", "10日以上前の発言", "chat", 1),
+    )
+    conn.commit()
+    conn.close()
+
+    episodes = hippocampus.get_recent_episodes(1, days=3)
+    assert len(episodes) == 1
+    assert episodes[0].content == "今日の発言"

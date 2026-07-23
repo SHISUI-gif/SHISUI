@@ -106,6 +106,36 @@ def get_unconsolidated_episodes() -> list[Episode]:
     ]
 
 
+def get_recent_episodes(user_id: int, days: int) -> list[Episode]:
+    """指定ユーザーの直近days日分のエピソードを、統合済み/未統合を問わず古い順で返す。
+
+    avatar.pyの解除判定用: 「その日話した内容だけ」だと話題がたまたま1日に
+    集中しなかった場合に永久にチャンスを逃すため、複数日にまたがる会話でも
+    テーマを拾えるようにする。
+    """
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, timestamp, role, content, source, consolidated, user_id, conversation_id, emotion "
+            "FROM episodes WHERE user_id = ? AND timestamp >= ? ORDER BY id ASC",
+            (user_id, cutoff),
+        ).fetchall()
+    return [
+        Episode(
+            id=r[0],
+            timestamp=r[1],
+            role=r[2],
+            content=r[3],
+            source=r[4],
+            consolidated=bool(r[5]),
+            user_id=r[6],
+            conversation_id=r[7],
+            emotion=r[8],
+        )
+        for r in rows
+    ]
+
+
 def get_recent_mood(user_id: int, limit: int = 5) -> str | None:
     """直近limit件のユーザー発言の感情ラベルから、最も多いものを返す(同数なら新しい方を優先)。
 
