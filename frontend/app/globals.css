@@ -18,16 +18,23 @@
   --secondary-foreground: #a3a3a3;
   --muted: #111111;
   --muted-foreground: #525252;
-  --accent: #c8ff00;
+  --accent: #b8935a;
   --accent-foreground: #000000;
   --destructive: #f87171;
   --border: #1a1a1a;
   --input: #1a1a1a;
-  --ring: #c8ff00;
+  --ring: #b8935a;
 
-  --neon: #c8ff00;
-  --neon-dim: #39ff14;
-  --gradient-shisui: linear-gradient(100deg, #c8ff00 0%, #39ff14 50%, #ffffff 100%);
+  /* 洗練・高級感を優先する方向へ修正: 彩度の高いネオン色をやめ、
+     落ち着いた深みのある色(ダークアンバー・ミッドナイトブルー・
+     マットオリーブ)に統一。グロー系の装飾は低いopacityでごく控えめに。
+     --gradient-shisuiは以前4色を繋いだ「虹色」で安っぽく見えたため、
+     単色(アンバー)を上から下へ濃淡でフェードさせるだけの、
+     縦線1本でも高級感を保てるシンプルな形に変更。 */
+  --neon: #b8935a;
+  --neon-dim: #5b7a9e;
+  --lime: #9caf4a;
+  --gradient-shisui: linear-gradient(180deg, #d4b483 0%, #b8935a 100%);
 }
 
 .dark {
@@ -43,12 +50,12 @@
   --secondary-foreground: #a3a3a3;
   --muted: #111111;
   --muted-foreground: #525252;
-  --accent: #c8ff00;
+  --accent: #b8935a;
   --accent-foreground: #000000;
   --destructive: #f87171;
   --border: #1a1a1a;
   --input: #1a1a1a;
-  --ring: #c8ff00;
+  --ring: #b8935a;
 }
 
 @theme inline {

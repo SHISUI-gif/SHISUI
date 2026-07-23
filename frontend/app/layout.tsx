@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Mono, Syne } from "next/font/google";
+import { IBM_Plex_Mono, Orbitron, Syne } from "next/font/google";
+import { GrainOverlay } from "@/components/GrainOverlay";
 import "./globals.css";
 
 const plexMono = IBM_Plex_Mono({
@@ -12,6 +13,15 @@ const syne = Syne({
   variable: "--font-syne",
   subsets: ["latin"],
   weight: ["700", "800"],
+});
+
+// ホームの見出し用。当初はドットマトリクス風(DotGothic16)にしていたが、
+// レトロ・可愛い方向に寄りすぎて「かっこよさ」が足りないとの指摘を受け、
+// 幾何学的でSF/サイバー感の強いOrbitronに変更した。
+const orbitron = Orbitron({
+  variable: "--font-orbitron",
+  subsets: ["latin"],
+  weight: ["700", "900"],
 });
 
 export const metadata: Metadata = {
@@ -43,8 +53,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja" className={`${plexMono.variable} ${syne.variable} dark h-full antialiased`}>
-      <body className="min-h-full flex flex-col bg-black text-white">{children}</body>
+    <html
+      lang="ja"
+      className={`${plexMono.variable} ${syne.variable} ${orbitron.variable} dark h-full antialiased`}
+    >
+      <body className="min-h-full flex flex-col bg-black text-white">
+        <GrainOverlay />
+        {children}
+      </body>
     </html>
   );
 }

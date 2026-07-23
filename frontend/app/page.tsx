@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, type TouchEvent, type WheelEvent } from "react"
+import { useEffect, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { AvatarDisplay } from "@/components/AvatarDisplay"
 import { LocalClock } from "@/components/LocalClock"
@@ -13,14 +13,15 @@ import { FeedbackReview } from "@/components/chat/FeedbackReview"
 import { FloatingInput } from "@/components/chat/FloatingInput"
 import { Sidebar } from "@/components/chat/Sidebar"
 import { StartupLoader } from "@/components/StartupLoader"
-import { AmbientBackground } from "@/components/three/AmbientBackground"
+import { LiquidChrome } from "@/components/three/LiquidChrome"
 import { clearAuth, loadAuth, saveAuth, getCurrentUser } from "@/lib/auth"
-import { AuthError, streamChat } from "@/lib/api"
+import { AuthError, fetchProactiveCheckin, streamChat } from "@/lib/api"
 import { getRecentActivity } from "@/lib/activity"
 import { getAvatarState } from "@/lib/avatar"
 import { getConversationMessages, listConversations } from "@/lib/conversations"
 import { applyProposal, getPendingProposals, rejectProposal } from "@/lib/evolution"
 import { dismissFeedback, getAllFeedback, submitFeedback } from "@/lib/userFeedback"
+import { cn } from "@/lib/utils"
 import type {
   ActivityEntry,
   AuthUser,
@@ -53,10 +54,12 @@ function StaggeredText({
   text,
   className,
   ready,
+  layoutId,
 }: {
   text: string
   className?: string
   ready: boolean
+  layoutId?: string
 }) {
   if (!ready) {
     return <span className={className}>{text}</span>
@@ -69,6 +72,8 @@ function StaggeredText({
       initial="hidden"
       animate="visible"
       aria-label={text}
+      layoutId={layoutId}
+      transition={layoutId ? SPRING : undefined}
     >
       {text.split("").map((char, i) => (
         <motion.span
@@ -83,6 +88,25 @@ function StaggeredText({
     </motion.span>
   )
 }
+
+// ヒーロー画面の統計(会話数・解除数・ムード)はサイドバーに移した
+// (「情報より志粋の存在感を優先する没入型の1枚絵」という方針のため)。
+
+// チャット開始時の候補プロンプト。実際に志粋が対応できる機能だけを挙げる
+// (架空の技術的読み取り値やこのセッション固有の開発内容は含めない)。
+const SUGGESTED_PROMPTS = [
+  "今日の天気を教えて",
+  "最近の夜間修行で何を学んだか教えて",
+  "コードのレビューをお願いしたい",
+  "最近あった出来事について話を聞いてほしい",
+]
+
+// チャット画面を開いたまま何もやり取りが無い状態がこの時間続いたら、志粋から
+// 自然に一言話しかける(プロアクティブな話しかけ)。
+const PROACTIVE_CHECKIN_IDLE_MS = 1 * 60 * 1000
+// 上記の判定自体は軽い処理だが、setIntervalで秒単位の無駄なre-renderを避けるための巡回間隔。
+// IDLE_MSが短いので、判定の粒度もそれに合わせて詰める
+const PROACTIVE_CHECKIN_POLL_MS = 10 * 1000
 
 export default function Home() {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -110,31 +134,20 @@ export default function Home() {
   const activeControllersRef = useRef<Set<AbortController>>(new Set())
   const nextLocalIdRef = useRef(0)
   const conversationIdRef = useRef<number | null>(null)
-  const touchStartYRef = useRef<number | null>(null)
-
-  // ヒーロー画面を上にスワイプ(スマホ)または上にスクロール(トラックパッド/ホイール)
-  // するとチャットを開く。ボタンタップは引き続き従来通り使える。
-  const SWIPE_UP_THRESHOLD_PX = 60
-
-  const handleHeroTouchStart = (event: TouchEvent) => {
-    touchStartYRef.current = event.touches[0]?.clientY ?? null
-  }
-
-  const handleHeroTouchEnd = (event: TouchEvent) => {
-    const startY = touchStartYRef.current
-    touchStartYRef.current = null
-    if (startY === null) return
-    const endY = event.changedTouches[0]?.clientY ?? startY
-    if (startY - endY > SWIPE_UP_THRESHOLD_PX) {
-      setChatOpen(true)
-    }
-  }
-
-  const handleHeroWheel = (event: WheelEvent) => {
-    if (event.deltaY < -20) {
-      setChatOpen(true)
-    }
-  }
+  // プロアクティブな話しかけ用: 最後にやり取り(送信/受信)があった時刻。
+  // 話しかけた直後もここを更新することで、そのまま連続で何度も話しかけ続けるのを防ぐ。
+  const lastActivityAtRef = useRef(Date.now())
+  const proactiveCheckinInFlightRef = useRef(false)
+  // setIntervalのコールバックは古いクロージャの値を見てしまうため、判定に必要な
+  // 最新のstateを都度この参照にミラーしておく(intervalそのものは1回だけ張って、
+  // 依存配列の変化のたびに再生成・巻き戻ることが無いようにするため)
+  const latestChatStateRef = useRef({
+    chatOpen: false,
+    conversationId: null as number | null,
+    streamingCount: 0,
+    hasMessages: false,
+    token: null as string | null,
+  })
 
   useEffect(() => {
     setReady(true)
@@ -301,6 +314,7 @@ export default function Home() {
     const assistantPlaceholder: ChatMessage = { role: "assistant", content: "", thinking: "", _localId: localId }
     setMessages((prev) => [...prev, userMessage, assistantPlaceholder])
     setStreamingCount((prev) => prev + 1)
+    lastActivityAtRef.current = Date.now()
 
     // 新規会話かどうかは、送信した瞬間のconversationIdRefで判定する(React stateの
     // 反映を待つとレースになるため)。ほぼ同時に2通「新規会話」を送った場合、
@@ -369,10 +383,55 @@ export default function Home() {
       setMessages((prev) =>
         prev.map((m) => (m._localId === localId ? { ...m, _localId: undefined } : m)),
       )
+      lastActivityAtRef.current = Date.now()
     }
   }
 
   const hasMessages = messages.length > 0
+
+  // 毎レンダー後にlatestChatStateRefを最新化するだけの軽い同期(依存配列を
+  // 持たせて頻繁にintervalそのものを張り直すのではなく、intervalは1本だけ
+  // 張ったままにして、判定に使う値だけをここで都度書き換える)
+  useEffect(() => {
+    latestChatStateRef.current = {
+      chatOpen,
+      conversationId,
+      streamingCount,
+      hasMessages,
+      token: user?.token ?? null,
+    }
+  })
+
+  // チャット画面を開いたまま数分間やり取りが無ければ、志粋から自然に話しかける
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      const { chatOpen, conversationId, streamingCount, hasMessages, token } =
+        latestChatStateRef.current
+      if (!chatOpen || !hasMessages || !conversationId || streamingCount > 0 || !token) return
+      if (document.visibilityState !== "visible") return
+      if (Date.now() - lastActivityAtRef.current < PROACTIVE_CHECKIN_IDLE_MS) return
+      if (proactiveCheckinInFlightRef.current) return
+
+      proactiveCheckinInFlightRef.current = true
+      fetchProactiveCheckin(token, conversationId)
+        .then((content) => {
+          // ローカルLLMがまれに空応答を返すことがあるため、nullの場合は
+          // 空の吹き出しを追加せず、この回は静かにスキップする
+          if (!content) return
+          setMessages((prev) => [...prev, { role: "assistant", content }])
+          lastActivityAtRef.current = Date.now()
+        })
+        .catch(() => {
+          // 取得できなくても静かに諦める(背後の軽い気配りなので、エラーを表に
+          // 出してユーザーの操作を止めるほどのものではない)
+        })
+        .finally(() => {
+          proactiveCheckinInFlightRef.current = false
+        })
+    }, PROACTIVE_CHECKIN_POLL_MS)
+
+    return () => clearInterval(intervalId)
+  }, [])
 
   if (!authChecked) {
     return <div className="min-h-screen bg-black" />
@@ -383,7 +442,12 @@ export default function Home() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-black">
+    <div
+      className={cn(
+        "relative flex min-h-screen flex-col bg-black",
+        !chatOpen && "overflow-hidden",
+      )}
+    >
       <StartupLoader />
 
       {/* subtle grid texture */}
@@ -401,80 +465,67 @@ export default function Home() {
         {!chatOpen ? (
           <motion.section
             key="hero"
-            className="relative flex min-h-screen flex-col items-center justify-center px-6"
+            className="relative flex min-h-screen flex-col overflow-hidden"
             exit={{ opacity: 0, scale: 0.96 }}
             transition={{ duration: 0.7, ease: EASE }}
-            onTouchStart={handleHeroTouchStart}
-            onTouchEnd={handleHeroTouchEnd}
-            onWheel={handleHeroWheel}
           >
-            {/* 常時ゆっくり動く3D背景。ヒーロー画面のみ、チャット画面には出さない */}
-            <AmbientBackground />
+            {/* 志粋という存在そのものを見せる、没入感のある1枚絵として再構成。
+                人物写真は「違和感がある」との指摘を受けて外し、リキッドクロームの
+                ブロブ自体を主役の被写体にした。反射に使うライトも、写真の
+                ランダムな都市風景(Environment preset)ではなく、サイト自体の
+                アクセントカラー(アンバー+ダークブルー)に統一し、世界観を合わせている */}
+            <div className="absolute inset-0 bg-black" />
 
+            {/* 被写体(リキッドクローム)を囲む、ゆっくり回転する円環(参考UIのリング装飾)。
+                高さ基準の%指定のため、縦長のスマホ画面だと横幅からはみ出す
+                (画面幅375pxに対しh-[52%]は800px超の高さの52%=400px超になる)。
+                スマホでは小さめの比率に落とす */}
             <motion.div
-              className="absolute top-6 right-6 z-10 sm:top-8 sm:right-8"
+              aria-hidden="true"
+              className="pointer-events-none absolute left-1/2 top-[46%] z-10 aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20 sm:h-[52%]"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 50, repeat: Infinity, ease: "linear" }}
+            />
+
+            {/* リキッドクローム — 人物の代わりにこれ自体を中央の主役にする */}
+            <LiquidChrome className="left-1/2 top-[46%] z-[5] h-64 w-64 -translate-x-1/2 -translate-y-1/2 sm:h-96 sm:w-96" />
+
+            {/* 中央だけだと周りの黒い空間が寂しいとの指摘を受け、同じ液体金属の
+                質感の小さめのブロブを2つ散りばめる(ワイヤーフレーム等の別の
+                ビジュアル言語は混ぜず、液体金属で統一する)。スマホでは
+                余白が少なく窮屈になるため非表示にする */}
+            <LiquidChrome className="left-[12%] top-[20%] z-[5] hidden h-24 w-24 sm:block" />
+            <LiquidChrome className="right-[14%] top-[72%] z-[5] hidden h-20 w-20 sm:block" />
+
+            {/* 1. 最小限のマストヘッド — 箱で囲わず、コーナーに文字だけ置く */}
+            <motion.div
+              className="relative z-10 flex items-center justify-between px-6 pt-6 sm:px-10 sm:pt-8 lg:px-16"
               initial={ready ? { opacity: 0, y: -12 } : false}
               animate={ready ? { opacity: 1, y: 0 } : undefined}
-              transition={{ duration: 0.6, ease: EASE, delay: 0.2 }}
+              transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
             >
+              <span className="font-mono text-[10px] tracking-[0.35em] text-white/50 uppercase">
+                志粋 / SHISUI
+              </span>
               <LocalClock />
             </motion.div>
 
-            {/* ghost layer — extreme size contrast */}
-            <motion.p
-              className="pointer-events-none absolute top-[18%] left-1/2 -translate-x-1/2 font-[family-name:var(--font-syne)] text-[clamp(4rem,18vw,14rem)] font-extrabold leading-none tracking-[-0.06em] text-white/[0.04] select-none"
-              initial={ready ? { opacity: 0, y: 80 } : false}
-              animate={ready ? { opacity: 1, y: 0 } : undefined}
-              transition={{ duration: 1.2, ease: EASE, delay: 0.1 }}
-              aria-hidden="true"
-            >
-              志粋
-            </motion.p>
-
-            <div className="relative z-10 w-full max-w-[100vw] text-center">
-              <h1 className="font-[family-name:var(--font-syne)] text-[clamp(3.5rem,14vw,11rem)] font-extrabold leading-[0.82] tracking-[-0.05em] text-white">
+            {/* 2. 見出し — 中央上部。幾何学的でSF感の強いOrbitronに、
+                アンバーのグロー(text-shadow)を added して「かっこよさ」を強調 */}
+            <div className="relative z-10 flex justify-center pt-8 sm:pt-12">
+              <h1
+                className="text-center font-[family-name:var(--font-orbitron)] text-[clamp(2.5rem,9vw,5.5rem)] font-black tracking-[0.15em] text-white"
+                style={{ textShadow: "0 0 40px rgba(184,147,90,0.5), 0 0 80px rgba(184,147,90,0.25)" }}
+              >
                 <StaggeredText text="SHISUI" ready={ready} />
               </h1>
-
-              <motion.div
-                className="relative mt-4"
-                variants={staggerContainer}
-                initial={ready ? "hidden" : false}
-                animate={ready ? "visible" : undefined}
-              >
-                <motion.p
-                  variants={fadeUp}
-                  className="font-mono text-[clamp(0.65rem,1.8vw,0.875rem)] tracking-[0.45em] text-[#c8ff00] uppercase sm:absolute sm:-bottom-3 sm:right-0 sm:translate-x-1/4"
-                >
-                  Autonomous AI
-                </motion.p>
-                <motion.p
-                  variants={fadeUp}
-                  className="mt-6 font-mono text-[clamp(0.6rem,1.2vw,0.75rem)] tracking-[0.25em] text-white/30 uppercase"
-                >
-                  Local · Private · Autonomous
-                </motion.p>
-              </motion.div>
             </div>
 
-            {/* overlapping accent word */}
-            <motion.span
-              className="pointer-events-none absolute bottom-[38%] right-[8%] font-[family-name:var(--font-syne)] text-[clamp(2rem,6vw,5rem)] font-bold leading-none tracking-tight text-[#c8ff00]/20 select-none sm:right-[15%]"
-              initial={ready ? { opacity: 0, x: 40 } : false}
-              animate={ready ? { opacity: 1, x: 0 } : undefined}
-              transition={{ duration: 1, ease: EASE, delay: 0.6 }}
-              aria-hidden="true"
-            >
-              AI
-            </motion.span>
-
-            <div className="relative z-10 mt-8 flex flex-col items-center gap-4 px-6">
-              <motion.div whileHover={{ scale: 1.05 }} transition={SPRING}>
-                <AvatarDisplay unlockedItems={avatarItems} mood={mood} />
-              </motion.div>
+            {/* 4. 下部 — 挨拶キャプション+対話開始(参考UIの下部キャプションと同じ配置) */}
+            <div className="relative z-10 mt-auto flex flex-col items-center gap-6 px-6 pb-10 text-center sm:pb-14">
               <div className="overflow-hidden">
                 <motion.p
-                  className="text-center font-mono text-sm text-white/50 sm:text-base"
+                  className="max-w-sm font-mono text-xs leading-relaxed text-white/60 sm:text-sm"
                   initial={ready ? { y: "100%", opacity: 0 } : false}
                   animate={ready ? { y: "0%", opacity: 1 } : undefined}
                   transition={{ duration: 0.8, ease: EASE, delay: 0.9 }}
@@ -482,28 +533,18 @@ export default function Home() {
                   {user.name}さん、今日は何を話そうか?
                 </motion.p>
               </div>
-            </div>
-
-            <motion.button
-              type="button"
-              onClick={() => setChatOpen(true)}
-              className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-transparent border-none outline-none cursor-pointer"
-              initial={ready ? { opacity: 0, y: 24 } : false}
-              animate={ready ? { opacity: 1, y: 0 } : undefined}
-              transition={{ duration: 0.8, ease: EASE, delay: 1.1 }}
-              whileHover={{ scale: 1.06, color: "#c8ff00", transition: SPRING }}
-              whileTap={{ scale: 0.97, transition: SPRING }}
-            >
-              <span className="font-mono text-xs tracking-[0.35em] text-white/50 uppercase transition-colors hover:text-[#c8ff00]">
+              <motion.button
+                type="button"
+                onClick={() => setChatOpen(true)}
+                className="cursor-pointer rounded-full border border-white/25 px-8 py-3 font-mono text-[10px] uppercase tracking-[0.3em] text-white/80 outline-none transition-colors hover:border-white/60 hover:text-white"
+                initial={ready ? { opacity: 0, y: 12 } : false}
+                animate={ready ? { opacity: 1, y: 0 } : undefined}
+                transition={{ duration: 0.8, ease: EASE, delay: 1.05 }}
+                whileTap={{ scale: 0.96, transition: SPRING }}
+              >
                 対話を開始
-              </span>
-              <motion.span
-                className="mt-3 block h-px w-16 bg-white/20 mx-auto"
-                initial={ready ? { scaleX: 0 } : false}
-                animate={ready ? { scaleX: 1 } : undefined}
-                transition={{ duration: 0.6, ease: EASE, delay: 1.3 }}
-              />
-            </motion.button>
+              </motion.button>
+            </div>
           </motion.section>
         ) : (
           <motion.div
@@ -518,6 +559,9 @@ export default function Home() {
               onClose={() => setSidebarOpen(false)}
               userName={user.name}
               isOwner={currentUser?.isOwner ?? false}
+              sessionCount={conversationList.length}
+              unlockCount={avatarItems.length}
+              mood={mood}
               conversations={conversationList}
               activeConversationId={conversationId}
               onSelectConversation={handleSelectConversation}
@@ -553,48 +597,94 @@ export default function Home() {
             />
 
             <motion.header
-              className="sticky top-0 z-30 shrink-0 bg-black px-6 pt-8 pb-4"
+              className="sticky top-4 z-30 mx-4 flex h-14 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl sm:mx-8"
               initial={{ opacity: 0, y: -16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, ease: EASE, delay: 0.1 }}
             >
-              <div className="mb-3 flex items-start justify-between">
-                <button
-                  type="button"
-                  onClick={() => setSidebarOpen(true)}
-                  aria-label="会話履歴を開く"
-                  className="group flex flex-col gap-1.5 p-1 -m-1"
-                >
-                  <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
-                  <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
-                  <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#c8ff00]" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setChatOpen(false)}
-                  aria-label="ホームに戻る"
-                  className="font-mono text-[10px] uppercase tracking-widest text-white/40 transition-colors hover:text-[#c8ff00]"
-                >
-                  ホーム
-                </button>
+              <motion.button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="会話履歴を開く"
+                whileHover={{ scale: 1.08 }}
+                whileTap={{ scale: 0.92 }}
+                transition={SPRING}
+                className="group flex w-14 shrink-0 flex-col items-center justify-center gap-1.5 border-r border-white/10"
+              >
+                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#b8935a]" />
+                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#b8935a]" />
+                <span className="block h-px w-5 bg-white/50 transition-colors group-hover:bg-[#b8935a]" />
+              </motion.button>
+
+              <div className="flex min-w-0 flex-1 items-center justify-between px-4">
+                <p className="font-[family-name:var(--font-syne)] text-sm font-bold tracking-tight text-white">
+                  SHISUI
+                </p>
+                <span className="font-mono text-[10px] tracking-[0.2em] text-white/25 tabular-nums">
+                  {streamingCount > 0 ? (
+                    <motion.span
+                      className="text-[#b8935a]"
+                      animate={{ opacity: [0.4, 1, 0.4] }}
+                      transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                    >
+                      応答中
+                    </motion.span>
+                  ) : (
+                    `№ ${String(Math.ceil(messages.length / 2)).padStart(2, "0")}`
+                  )}
+                </span>
               </div>
-              <p className="font-[family-name:var(--font-syne)] text-lg font-bold tracking-tight text-white">
-                SHISUI
-              </p>
-              <motion.span
-                className="mt-1 block h-px w-10 origin-left bg-[#c8ff00]"
-                initial={{ scaleX: 0 }}
-                animate={{ scaleX: 1 }}
-                transition={{ duration: 0.5, ease: EASE, delay: 0.3 }}
-              />
-              <p className="mt-2 font-mono text-[10px] tracking-[0.3em] text-[#c8ff00]/70 uppercase">
-                Autonomous AI
-              </p>
+
+              <motion.button
+                type="button"
+                onClick={() => setChatOpen(false)}
+                aria-label="ホームに戻る"
+                whileHover={{ scale: 1.08 }}
+                whileTap={{ scale: 0.92 }}
+                transition={SPRING}
+                className="flex w-14 shrink-0 items-center justify-center border-l border-white/10 font-mono text-[10px] uppercase tracking-widest text-white/40 transition-colors hover:text-[#b8935a]"
+              >
+                ホーム
+              </motion.button>
             </motion.header>
 
             {hasMessages && <ChatMessages messages={messages} />}
 
-            {!hasMessages && <div className="flex-1" />}
+            {!hasMessages && (
+              <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
+                <div className="h-32 w-32 opacity-70 sm:h-40 sm:w-40">
+                  <AvatarDisplay unlockedItems={avatarItems} mood={mood} />
+                </div>
+                <p className="text-center font-[family-name:var(--font-syne)] text-xl font-light text-white sm:text-2xl">
+                  {user.name}さん、何を話そうか?
+                </p>
+
+                {/* 候補プロンプト — 実際に使える機能に対応したものだけを提示する
+                    (架空の技術的な読み取り値は表示しない)。クリックで即送信。
+                    枠が単なる細線の四角で安っぽいとの指摘を受け、他画面と揃えた
+                    ガラス質のカード(角丸・ぼかし・内側ハイライト)に変更 */}
+                <div className="flex w-full max-w-sm flex-col gap-2.5">
+                  {SUGGESTED_PROMPTS.map((suggestion) => (
+                    <motion.button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => handleSend(suggestion)}
+                      whileHover={{ scale: 1.02, y: -1 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={SPRING}
+                      className="group flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3.5 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl transition-colors hover:border-[#b8935a]/40 hover:bg-white/[0.06]"
+                    >
+                      <span className="font-mono text-xs text-white/60 transition-colors group-hover:text-white/90">
+                        {suggestion}
+                      </span>
+                      <span className="font-mono text-xs text-white/20 transition-colors group-hover:text-[#b8935a]">
+                        →
+                      </span>
+                    </motion.button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <FloatingInput
               onSend={handleSend}

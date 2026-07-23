@@ -48,9 +48,18 @@ export function StartupLoader({ onDone }: StartupLoaderProps) {
           exit={{ y: "-100%" }}
           transition={{ duration: 0.6, ease: EASE }}
         >
-          <span className="font-mono text-sm tracking-[0.3em] text-[#c8ff00]/70">
-            {Math.floor(progress)}%
-          </span>
+          <div className="flex w-40 flex-col items-center gap-3">
+            <span className="font-mono text-sm tracking-[0.3em] text-[#b8935a]/70">
+              {Math.floor(progress)}%
+            </span>
+            <div className="h-px w-full bg-[#b8935a]/20">
+              <motion.div
+                className="h-px bg-[#b8935a]"
+                animate={{ width: `${progress}%` }}
+                transition={{ duration: 0.2, ease: EASE }}
+              />
+            </div>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

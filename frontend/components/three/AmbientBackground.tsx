@@ -1,34 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useRef } from "react"
+import { useMemo, useRef } from "react"
 import { Canvas, useFrame } from "@react-three/fiber"
 import * as THREE from "three"
+import { usePointerRef } from "./usePointer"
 
 const PARTICLE_COUNT = 400
-const ACCENT_COLOR = "#c8ff00"
-
-/**
- * ポインター位置を[-1, 1]範囲に正規化してrefに保持するだけの購読フック。
- * pointer-events-noneなCanvas自体では拾えないため、windowで直接listenする。
- * ヒーロー画面限定で使うことを前提にしている(チャット画面ではこの
- * コンポーネント自体をマウントしない)。
- */
-function usePointerRef() {
-  const pointer = useRef({ x: 0, y: 0 })
-
-  useEffect(() => {
-    const handlePointerMove = (event: PointerEvent) => {
-      pointer.current = {
-        x: (event.clientX / window.innerWidth) * 2 - 1,
-        y: (event.clientY / window.innerHeight) * 2 - 1,
-      }
-    }
-    window.addEventListener("pointermove", handlePointerMove)
-    return () => window.removeEventListener("pointermove", handlePointerMove)
-  }, [])
-
-  return pointer
-}
+const ACCENT_COLOR = "#b8935a"
 
 function Particles({ pointer }: { pointer: React.RefObject<{ x: number; y: number }> }) {
   const pointsRef = useRef<THREE.Points>(null)

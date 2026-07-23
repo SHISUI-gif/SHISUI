@@ -36,10 +36,10 @@ export function LocalClock() {
   if (!now) return null
 
   return (
-    <div className="flex items-center gap-2 border border-white/10 px-3 py-1.5 font-mono text-[10px] tracking-[0.2em] text-white/40 uppercase">
+    <div className="flex items-baseline gap-2 font-mono text-[10px] tracking-[0.25em] text-white/40 uppercase sm:text-xs">
       <span>{formatDate(now)}</span>
       <span className="text-white/15">/</span>
-      <span className="tabular-nums text-[#c8ff00]/70">{formatTime(now)}</span>
+      <span className="tabular-nums text-[#b8935a]/80">{formatTime(now)}</span>
     </div>
   )
 }
