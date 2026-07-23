@@ -25,18 +25,22 @@ CLASSIFICATION_PROMPT = """\
 選択肢:
 - CODING: プログラミング、UI設計、システム開発関連
 - REASONING: 論理的考察、哲学、深い洞察が必要な問い
-- CHAT: 雑談、軽い調べ物
-出力は以下の単語のみ: "CODING", "REASONING", "CHAT"
+- SIMPLE: あいさつ、相槌、一言確認など、深く考える必要が無いごく軽い一言
+- CHAT: 上記のどれにも当てはまらない、内容のある雑談・軽い調べ物
+出力は以下の単語のみ: "CODING", "REASONING", "SIMPLE", "CHAT"
 """
 
 _CATEGORY_TO_SETTING = {
     "CODING": "router_coding_model",
     "REASONING": "router_reasoning_model",
+    "SIMPLE": "router_simple_model",
     "CHAT": "router_chat_model",
 }
 _CATEGORY_TO_GROQ_SETTING = {
     "CODING": "groq_coding_model",
     "REASONING": "groq_reasoning_model",
+    # GroqはAPI側で既に高速なため、SIMPLE専用の軽量モデルは分けずCHATと同じにする
+    "SIMPLE": "groq_chat_model",
     "CHAT": "groq_chat_model",
 }
 
@@ -47,12 +51,25 @@ _CODING_KEYWORDS = re.compile(
 )
 
 
+def _coding_model() -> str:
+    """コーディング質問の振り分け先モデルを返す。
+
+    OPENROUTER_API_KEYが設定されていれば、Ollama/Groqの手持ちモデルより大きい
+    コーディング特化モデル(既定: Qwen3 Coder 480B、OpenRouterの無料枠)へ
+    限定的に逃がす。未設定なら従来通りOllama/Groqのコーディングモデルを使う。
+    """
+    if settings.openrouter_api_key:
+        return settings.openrouter_coding_model
+    return settings.groq_coding_model if settings.use_groq else settings.router_coding_model
+
+
 def route_model(user_query: str) -> str:
     """質問内容に応じたモデル名を返す。ルーティング無効時・失敗時はフォールバックモデルを返す。
 
     settings.use_groqがtrueの場合、ローカルOllamaではなくGroqの無料枠APIで分類し、
     Groq側のモデル名を返す(Macの蓋を閉じても動けるクラウド移行の選択肢、
-    config/settings.py参照)。
+    config/settings.py参照)。コーディング質問だけは、OPENROUTER_API_KEYが
+    設定されていればOpenRouter側のモデルへ優先的に振り分ける。
     """
     client = groq_client if settings.use_groq else ollama
     classifier_model = settings.groq_classifier_model if settings.use_groq else settings.router_classifier_model
@@ -63,7 +80,7 @@ def route_model(user_query: str) -> str:
         return fallback_model
 
     if _CODING_KEYWORDS.search(user_query):
-        return settings.groq_coding_model if settings.use_groq else settings.router_coding_model
+        return _coding_model()
 
     try:
         decision = client.chat(
@@ -71,6 +88,8 @@ def route_model(user_query: str) -> str:
             messages=[{"role": "user", "content": CLASSIFICATION_PROMPT.format(query=user_query)}],
         )
         category = decision["message"]["content"].strip().upper()
+        if category == "CODING":
+            return _coding_model()
         setting_name = category_to_setting.get(category)
         if setting_name is None:
             return fallback_model

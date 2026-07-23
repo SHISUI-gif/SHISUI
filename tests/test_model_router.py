@@ -18,13 +18,16 @@ def _fake_settings(**overrides):
         router_classifier_model="qwen3:1.5b",
         router_coding_model="qwen3-coder:30b",
         router_reasoning_model="deepseek-r1:8b",
-        router_chat_model="qwen3:7b",
+        router_simple_model="qwen3:1.7b",
+        router_chat_model="gemma2:9b",
         ollama_model="qwen2.5:32b",
         use_groq=False,
         groq_classifier_model="llama-3.1-8b-instant",
         groq_coding_model="qwen/qwen3-32b",
         groq_reasoning_model="qwen/qwen3-32b",
         groq_chat_model="qwen/qwen3-32b",
+        openrouter_api_key="",
+        openrouter_coding_model="qwen/qwen3-coder:free",
     )
     base.update(overrides)
     return types.SimpleNamespace(**base)
@@ -55,7 +58,23 @@ def test_route_model_routes_to_chat_model(monkeypatch):
     monkeypatch.setattr(model_router, "settings", _fake_settings())
     monkeypatch.setattr(ollama, "chat", _fake_chat("CHAT"))
 
-    assert model_router.route_model("おはよう!") == "qwen3:7b"
+    assert model_router.route_model("おはよう!") == "gemma2:9b"
+
+
+def test_route_model_routes_to_simple_model(monkeypatch):
+    """あいさつ・相槌など軽い一言はSIMPLE判定され、qwen3:1.7bのような軽量モデルへ振り分ける。"""
+    monkeypatch.setattr(model_router, "settings", _fake_settings())
+    monkeypatch.setattr(ollama, "chat", _fake_chat("SIMPLE"))
+
+    assert model_router.route_model("おっけー") == "qwen3:1.7b"
+
+
+def test_route_model_simple_uses_groq_chat_model_when_use_groq(monkeypatch):
+    """Groq利用時はSIMPLE専用モデルを分けず、既存のgroq_chat_modelにまとめる。"""
+    monkeypatch.setattr(model_router, "settings", _fake_settings(use_groq=True))
+    monkeypatch.setattr(model_router.groq_client, "chat", _fake_chat("SIMPLE"))
+
+    assert model_router.route_model("おっけー") == "qwen/qwen3-32b"
 
 
 def test_route_model_disabled_skips_classification_entirely(monkeypatch):
@@ -123,3 +142,57 @@ def test_route_model_groq_fallback_on_error(monkeypatch):
     monkeypatch.setattr(model_router.groq_client, "chat", _raise)
 
     assert model_router.route_model("何か質問") == "qwen/qwen3-32b"
+
+
+def test_route_model_coding_keyword_uses_openrouter_when_configured(monkeypatch):
+    """OPENROUTER_API_KEYが設定されていれば、コーディングキーワードでの即決も
+    OpenRouterのコーディングモデルへ優先的に振り分けられる。"""
+    monkeypatch.setattr(
+        model_router,
+        "settings",
+        _fake_settings(openrouter_api_key="sk-or-test", openrouter_coding_model="qwen/qwen3-coder:free"),
+    )
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("キーワードで即決できる場合はollama.chatが呼ばれてはいけない")
+
+    monkeypatch.setattr(ollama, "chat", _fail_if_called)
+
+    assert model_router.route_model("このバグを直して") == "qwen/qwen3-coder:free"
+
+
+def test_route_model_coding_classification_uses_openrouter_when_configured(monkeypatch):
+    """キーワードに引っかからず分類LLMがCODINGと判定した場合も、
+    OPENROUTER_API_KEYが設定されていればOpenRouterへ振り分けられる。"""
+    monkeypatch.setattr(
+        model_router,
+        "settings",
+        _fake_settings(openrouter_api_key="sk-or-test", openrouter_coding_model="qwen/qwen3-coder:free"),
+    )
+    monkeypatch.setattr(ollama, "chat", _fake_chat("CODING"))
+
+    assert model_router.route_model("この設計についてどう思う?") == "qwen/qwen3-coder:free"
+
+
+def test_route_model_coding_without_openrouter_key_uses_existing_behavior(monkeypatch):
+    """OPENROUTER_API_KEY未設定なら、従来通りOllama/Groqのコーディングモデルのまま。"""
+    monkeypatch.setattr(model_router, "settings", _fake_settings(openrouter_api_key=""))
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("キーワードで即決できる場合はollama.chatが呼ばれてはいけない")
+
+    monkeypatch.setattr(ollama, "chat", _fail_if_called)
+
+    assert model_router.route_model("このバグを直して") == "qwen3-coder:30b"
+
+
+def test_route_model_non_coding_ignores_openrouter_setting(monkeypatch):
+    """OpenRouterはコーディング質問専用で、他のカテゴリには影響しない。"""
+    monkeypatch.setattr(
+        model_router,
+        "settings",
+        _fake_settings(openrouter_api_key="sk-or-test", openrouter_coding_model="qwen/qwen3-coder:free"),
+    )
+    monkeypatch.setattr(ollama, "chat", _fake_chat("CHAT"))
+
+    assert model_router.route_model("おはよう!") == "gemma2:9b"
