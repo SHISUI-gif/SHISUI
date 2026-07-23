@@ -7,10 +7,16 @@ rich>=13.7.1
 tavily-python>=0.5.0
 # 無料・APIキー不要のWeb検索(Tavilyの補完用)。旧名duckduckgo-searchは凍結され改名された
 ddgs>=8.1.1
+# ニュース取得API (https://currentsapi.services/、無料枠1日1000リクエスト)。
+# 専用SDKは無く単純なREST APIなのでrequestsで直接叩く
+requests>=2.31.0
 # ローカルLLM (Ollama) クライアント。qwen2.5等のQwen系モデルを想定
 ollama>=0.4.7
 # クラウド移行の選択肢(USE_GROQ=true時)。無料枠APIで、Macを閉じても
-# 動き続けられるようにするための切り替え用(config/settings.py参照)
+# 動き続けられるようにするための切り替え用(config/settings.py参照)。
+# OpenRouter(コーディング質問限定の振り分け先、config/settings.pyの
+# OPENROUTER_API_KEY)もこの同じパッケージをbase_url差し替えで再利用しており、
+# 新しい依存パッケージは増やしていない(src/common/openrouter_client.py参照)
 groq>=1.5.0
 
 # ==== 2. 議事録作成機能(話者分離 + 文字起こし + 要約) ====

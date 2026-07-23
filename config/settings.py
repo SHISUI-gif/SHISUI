@@ -67,6 +67,9 @@ class Settings:
     memory_retention_days: int = int(os.getenv("MEMORY_RETENTION_DAYS", "7"))
     memory_recall_top_k: int = int(os.getenv("MEMORY_RECALL_TOP_K", "5"))
     memory_similarity_threshold: float = float(os.getenv("MEMORY_SIMILARITY_THRESHOLD", "0.85"))
+    # アバター解除判定の対象期間。「その日話した内容だけ」だと話題が1日に
+    # 集中しなかった場合に永久にチャンスを逃すため、複数日分の会話を毎回まとめて見る。
+    avatar_unlock_lookback_days: int = int(os.getenv("AVATAR_UNLOCK_LOOKBACK_DAYS", "3"))
 
     # 文学的感性コーパス(Aozora Bunko)
     literary_hint_top_k: int = int(os.getenv("LITERARY_HINT_TOP_K", "2"))
@@ -86,7 +89,27 @@ class Settings:
     router_classifier_model: str = os.getenv("ROUTER_CLASSIFIER_MODEL", "qwen3:1.7b")
     router_coding_model: str = os.getenv("ROUTER_CODING_MODEL", "qwen3-coder:30b")
     router_reasoning_model: str = os.getenv("ROUTER_REASONING_MODEL", "deepseek-r1:8b")
-    router_chat_model: str = os.getenv("ROUTER_CHAT_MODEL", "qwen3:8b")
+    # あいさつ・一言確認等の軽い雑談は、Qwen3 8Bよりさらに小さいqwen3:1.7bに任せる。
+    # 当初Phi-3.5 Mini(2.2GB)を試したが、システムプロンプト付きで実際に検証したところ
+    # 日本語のカジュアルな口調が崩れ、支離滅裂で過度に丁寧な文章になったため不採用。
+    # qwen3:1.7bは分類器としても既に実績があり、日本語のカジュアルな返答も自然だった。
+    router_simple_model: str = os.getenv("ROUTER_SIMPLE_MODEL", "qwen3:1.7b")
+    # 内容のある雑談はGemma 2 9Bへ(Qwen3 8Bより自然な会話文になる傾向があるため変更)
+    router_chat_model: str = os.getenv("ROUTER_CHAT_MODEL", "gemma2:9b")
+
+    # ニュース学習(Currents API、無料枠1日1000リクエスト・クレジットカード不要)。
+    # (1) 会話中にユーザーが求めたら今日のニュースを調べて紹介するツール、
+    # (2) 夜間修行で「社会」トピックとして時事ニュースも学ぶ、の両方で使う。
+    # 未設定(空文字列)ならどちらの機能も無効になる(必須ではない)。
+    currents_api_key: str = os.getenv("CURRENTS_API_KEY", "")
+    study_news_topics_count: int = int(os.getenv("STUDY_NEWS_TOPICS_COUNT", "1"))
+
+    # 天気予報(Open-Meteo API、完全無料・APIキー不要)。
+    # ユーザーが地名を指定しない場合や、地名からの位置特定に失敗した場合の
+    # 既定地点(那由多さんの利用地域である東京がデフォルト)。
+    weather_default_latitude: float = float(os.getenv("WEATHER_DEFAULT_LATITUDE", "35.6762"))
+    weather_default_longitude: float = float(os.getenv("WEATHER_DEFAULT_LONGITUDE", "139.6503"))
+    weather_default_location_name: str = os.getenv("WEATHER_DEFAULT_LOCATION_NAME", "東京")
 
     # 感情トーン検知(ユーザーの発言の感情を分類し、志粋の返答トーンに反映する)。
     # 分類モデルはROUTER_CLASSIFIER_MODEL(またはGroq利用時はGROQ_CLASSIFIER_MODEL)を共用する。
@@ -112,6 +135,15 @@ class Settings:
     groq_coding_model: str = os.getenv("GROQ_CODING_MODEL", "qwen/qwen3-32b")
     groq_reasoning_model: str = os.getenv("GROQ_REASONING_MODEL", "qwen/qwen3-32b")
     groq_chat_model: str = os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3-32b")
+
+    # OpenRouter(無料枠、コーディング質問だけ限定で使う)。
+    # OpenRouterの無料枠(:freeモデル)は1日50〜1000リクエストとGroqよりかなり
+    # 少ないため、雑談等の一般的な会話には向かない(1ターンで複数回LLM呼び出しが
+    # 走るため、すぐ枯渇する)。コーディング質問だけ、より大きなモデル
+    # (Qwen3 Coder 480B)に逃がす限定用途で使う。未設定(空文字列)なら
+    # 従来通りOllama/Groqでコーディング質問も処理する。
+    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    openrouter_coding_model: str = os.getenv("OPENROUTER_CODING_MODEL", "qwen/qwen3-coder:free")
 
     # 夜間トリガー(睡眠・自律学習・自律討論を「夜眠っている間」だけ動かす)
     night_mode_start_hour: int = int(os.getenv("NIGHT_MODE_START_HOUR", "23"))
