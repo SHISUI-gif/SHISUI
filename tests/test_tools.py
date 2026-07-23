@@ -117,3 +117,104 @@ def test_execute_web_search_deduplicates_same_url_across_sources(monkeypatch):
     result = tools.execute_web_search("テスト検索")
 
     assert result.count(same_url) == 1
+
+
+class _FakeNewsClientRaisingOnInit:
+    def __init__(self, *args, **kwargs):
+        raise ValueError("CURRENTS_API_KEYが設定されていません。.envファイルを確認してください。")
+
+
+class _FakeNewsClientRaisingOnFetch:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get_today_headlines(self, category=None, max_results=5):
+        raise Exception("APIエラー")
+
+
+class _FakeNewsClientSuccess:
+    def __init__(self, articles):
+        self._articles = articles
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def get_today_headlines(self, category=None, max_results=5):
+        return self._articles
+
+
+def test_execute_get_today_news_reports_missing_api_key(monkeypatch):
+    monkeypatch.setattr(tools, "NewsClient", _FakeNewsClientRaisingOnInit)
+
+    result = tools.execute_get_today_news()
+
+    assert "CURRENTS_API_KEY" in result
+    assert "取得できませんでした" in result
+
+
+def test_execute_get_today_news_reports_fetch_failure_honestly(monkeypatch):
+    monkeypatch.setattr(tools, "NewsClient", _FakeNewsClientRaisingOnFetch)
+
+    result = tools.execute_get_today_news()
+
+    assert "取得できなかった" in result
+
+
+def test_execute_get_today_news_returns_formatted_headlines(monkeypatch):
+    from src.research.news_client import NewsArticle
+
+    article = NewsArticle(
+        title="テストニュース", url="https://example.com", description="説明", published="2026-07-05"
+    )
+    monkeypatch.setattr(tools, "NewsClient", _FakeNewsClientSuccess([article]))
+
+    result = tools.execute_get_today_news()
+
+    assert "テストニュース" in result
+    assert "https://example.com" in result
+
+
+class _FakeWeatherClientRaising:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get_forecast_for_location(self, location_name=None):
+        raise Exception("APIエラー")
+
+
+class _FakeWeatherClientSuccess:
+    def __init__(self, report):
+        self._report = report
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def get_forecast_for_location(self, location_name=None):
+        return self._report
+
+
+def test_execute_get_weather_reports_failure_honestly(monkeypatch):
+    monkeypatch.setattr(tools, "WeatherClient", _FakeWeatherClientRaising)
+
+    result = tools.execute_get_weather()
+
+    assert "取得できなかった" in result
+
+
+def test_execute_get_weather_returns_formatted_report(monkeypatch):
+    from src.research.weather_client import WeatherReport
+
+    report = WeatherReport(
+        location_name="東京",
+        current_temperature=24.5,
+        current_humidity=80,
+        current_weather="小雨",
+        current_wind_speed_kmh=12.0,
+        daily_forecasts=[],
+    )
+    monkeypatch.setattr(tools, "WeatherClient", _FakeWeatherClientSuccess(report))
+
+    result = tools.execute_get_weather()
+
+    assert "東京" in result
+    assert "24.5" in result

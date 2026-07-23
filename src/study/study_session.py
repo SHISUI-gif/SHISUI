@@ -14,6 +14,7 @@ from config.settings import STUDY_SESSIONS_FILE, settings
 from src.common.llm_client import OllamaClient
 from src.core import activity_log
 from src.memory import neocortex
+from src.research.news_client import NewsClient
 from src.study import weakness_finder
 from src.study.mentor_client import GeminiClient
 
@@ -57,6 +58,24 @@ def _format_dialogue(dialogue: list[dict]) -> str:
     return "\n".join(f"{turn['role']}: {turn['content']}" for turn in dialogue)
 
 
+def _collect_news_topics() -> list[str]:
+    """今日の主要ニュースから、社会科の学習として夜間修行に加えるトピックを作る。
+
+    CURRENTS_API_KEY未設定・取得失敗時は静かに空リストを返す(弱点トピックが
+    無くてもニュース学習自体は行いたいので、こちらの失敗で夜間修行全体を
+    スキップさせないための設計)。
+    """
+    if not settings.currents_api_key or settings.study_news_topics_count <= 0:
+        return []
+
+    try:
+        articles = NewsClient().get_today_headlines(max_results=settings.study_news_topics_count)
+    except Exception:  # noqa: BLE001
+        return []
+
+    return [f"今日のニュース「{a.title}」について、社会的な背景や影響を考える" for a in articles]
+
+
 def _study_topic(topic: str, llm: OllamaClient, mentor: GeminiClient, turns: int) -> TopicResult:
     dialogue: list[dict] = []
     question = llm.chat(SHISUI_ASK_SYSTEM_PROMPT, f"トピック: {topic}")
@@ -85,10 +104,11 @@ def _study_topic(topic: str, llm: OllamaClient, mentor: GeminiClient, turns: int
 def run_study_session(
     llm: OllamaClient | None = None, mentor: GeminiClient | None = None
 ) -> StudySessionResult:
-    """弱点トピックを見つけ、メンターと議論し、教訓を新皮質へ保存する。学ぶべき材料が無ければスキップする。"""
+    """弱点トピック+今日のニュース(社会科学習)を見つけ、メンターと議論し、
+    教訓を新皮質へ保存する。学ぶべき材料が一つも無ければスキップする。"""
     llm = llm or OllamaClient()
 
-    topics = weakness_finder.find_weak_topics(llm=llm)
+    topics = weakness_finder.find_weak_topics(llm=llm) + _collect_news_topics()
     if not topics:
         return StudySessionResult(skipped=True)
 

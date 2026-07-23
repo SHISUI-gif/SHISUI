@@ -15,6 +15,8 @@ from tavily.errors import (
     UsageLimitExceededError,
 )
 
+from src.research.news_client import NewsClient, format_headlines_for_llm
+from src.research.weather_client import WeatherClient, format_weather_for_llm
 from src.research.web_search import DuckDuckGoSearchClient, WebSearchClient
 
 WEB_SEARCH_TOOL_SCHEMA = {
@@ -87,9 +89,96 @@ def execute_web_search(query: str, max_results: int = 5) -> str:
     )
 
 
+GET_TODAY_NEWS_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_today_news",
+        "description": (
+            "ユーザーに「今日のニュース」「最近の出来事」などを聞かれたときに、"
+            "実際の最新ニュースを取得する。このツールを使わずにニュースの中身を"
+            "答えることは絶対にしないこと(知識にない出来事を作り話してしまうため)。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": (
+                        "絞り込みたい分野があれば指定(例: politics_government, "
+                        "economy_business_finance, science_technology, sport)。"
+                        "指定が無ければ主要なニュース全般を取得する。"
+                    ),
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def execute_get_today_news(category: str | None = None) -> str:
+    """get_today_newsツールコールを実行し、LLMに読ませるテキスト形式のニュース一覧を返す。
+
+    CURRENTS_API_KEY未設定・API側の不調(レート制限・ネットワーク不調等)の場合は、
+    その旨を伝える文字列を返す(志粋が「取得できなかった」と正直に言えるようにするため、
+    黙って空文字列にはしない)。
+    """
+    try:
+        client = NewsClient()
+    except ValueError:
+        return "ニュース取得機能(CURRENTS_API_KEY)が設定されていないため、今日のニュースを取得できませんでした。"
+
+    try:
+        articles = client.get_today_headlines(category=category)
+    except Exception as exc:  # noqa: BLE001
+        return f"ニュースの取得に失敗しました({exc})。正直に「取得できなかった」と伝えること。"
+
+    return format_headlines_for_llm(articles)
+
+
+GET_WEATHER_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": (
+            "ユーザーに「今日の天気」「明日の天気」などを聞かれたときに、"
+            "実際の天気予報を取得する。このツールを使わずに気温・天気・降水確率"
+            "などを答えることは絶対にしないこと(知らない数値を作り話してしまうため)。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "地名(例: 東京、大阪)。指定が無ければ既定の地域(東京)の天気を取得する。",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def execute_get_weather(location: str | None = None) -> str:
+    """get_weatherツールコールを実行し、LLMに読ませるテキスト形式の天気予報を返す。
+
+    Open-Meteoは無料・APIキー不要のため「未設定」で失敗することは無いが、
+    API側の不調(ネットワーク不調・地名が見つからない等)の場合は、その旨を
+    伝える文字列を返す(志粋が「取得できなかった」と正直に言えるようにするため)。
+    """
+    try:
+        report = WeatherClient().get_forecast_for_location(location_name=location)
+    except Exception as exc:  # noqa: BLE001
+        return f"天気の取得に失敗しました({exc})。正直に「取得できなかった」と伝えること。"
+
+    return format_weather_for_llm(report)
+
+
 # ツール名 -> 実行関数 のレジストリ。新しいツールを追加する際はここに登録する。
 AVAILABLE_TOOLS = {
     "web_search": execute_web_search,
+    "get_today_news": execute_get_today_news,
+    "get_weather": execute_get_weather,
 }
 
-ALL_TOOL_SCHEMAS = [WEB_SEARCH_TOOL_SCHEMA]
+ALL_TOOL_SCHEMAS = [WEB_SEARCH_TOOL_SCHEMA, GET_TODAY_NEWS_TOOL_SCHEMA, GET_WEATHER_TOOL_SCHEMA]
