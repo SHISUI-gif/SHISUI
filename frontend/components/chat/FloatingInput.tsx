@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react"
 import { motion } from "framer-motion"
 import { cn } from "@/lib/utils"
-import { EASE } from "@/lib/motion"
+import { EASE, SPRING } from "@/lib/motion"
 
 interface FloatingInputProps {
   onSend: (message: string) => void
@@ -157,21 +157,21 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
 
   return (
     <motion.div
-      className="sticky bottom-0 w-full px-6 pb-10 pt-4 bg-black"
+      className="sticky bottom-4 mx-4 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl sm:mx-8"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.7, ease: EASE, delay: 0.2 }}
     >
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+      <div className="mx-auto w-full max-w-3xl">
         {(attachedFile || fileError) && (
-          <div className="flex items-center gap-2 font-mono text-[10px] text-white/40">
+          <div className="flex items-center gap-2 px-4 pt-2 font-mono text-[10px] text-white/40">
             {attachedFile && (
               <span className="flex items-center gap-2 border border-white/15 px-2 py-1">
                 {attachedFile.name}
                 <button
                   type="button"
                   onClick={() => setAttachedFile(null)}
-                  className="text-white/40 hover:text-[#c8ff00]"
+                  className="text-white/40 hover:text-[#b8935a]"
                   aria-label="添付を取り消す"
                 >
                   ×
@@ -182,7 +182,7 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
           </div>
         )}
 
-        <div className="flex items-baseline gap-4 border-b border-white/15 pb-2">
+        <div className="flex w-full items-end">
           <input
             ref={fileInputRef}
             type="file"
@@ -190,18 +190,22 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
             onChange={handleFileChange}
             className="hidden"
           />
-          <button
+          <motion.button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             aria-label="ファイルを添付"
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.92 }}
+            transition={SPRING}
             className={cn(
-              "shrink-0 bg-transparent border-none outline-none cursor-pointer",
+              "flex h-14 w-14 shrink-0 items-end justify-center pb-3 border-r border-white/10",
+              "bg-transparent outline-none cursor-pointer",
               "font-mono text-base text-white/30 leading-none",
-              "transition-colors hover:text-[#c8ff00]",
+              "transition-colors hover:text-[#b8935a]",
             )}
           >
             +
-          </button>
+          </motion.button>
 
           {/* 生成中でも次のメッセージを入力・送信できるようにする(志粋の応答を
               読んでいる間も止められたくない、という要望への対応)。生成中は
@@ -211,62 +215,79 @@ export function FloatingInput({ onSend, onStop, isStreaming, autoFocus }: Floati
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="志粋にメッセージを送る... (Cmd/Ctrl+Enter、またはEnter2回で送信)"
+            placeholder="志粋にメッセージを送る..."
             rows={1}
             className={cn(
-              "field-sizing-content min-h-0 flex-1 resize-none bg-transparent border-none outline-none",
+              "field-sizing-content min-h-[44px] flex-1 resize-none bg-transparent border-none outline-none",
               // iOS Safariはinput/textareaのフォントサイズが16px未満だとフォーカス時に
               // 自動でズームインしてしまうため、スマホ幅ではtext-base(16px)を使う
-              "px-0 py-0 text-base leading-relaxed text-white/90 sm:text-sm",
+              "px-4 py-3 text-base leading-relaxed text-white/90 sm:text-sm",
               "placeholder:text-white/25 placeholder:font-mono placeholder:text-xs placeholder:tracking-wider",
               "focus:outline-none focus-visible:outline-none focus-visible:ring-0",
             )}
           />
 
           {speechSupported && (
-            <button
+            <motion.button
               type="button"
               onClick={toggleListening}
               aria-label={isListening ? "音声入力を停止" : "音声入力を開始"}
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.92 }}
+              transition={SPRING}
               className={cn(
-                "shrink-0 bg-transparent border-none outline-none cursor-pointer",
+                "flex h-14 shrink-0 items-end justify-center px-3 pb-3.5 border-l border-white/10",
+                "bg-transparent outline-none cursor-pointer",
                 "font-mono text-[10px] tracking-[0.25em] uppercase",
-                isListening ? "text-[#c8ff00] animate-pulse" : "text-white/30",
-                "transition-colors hover:text-[#c8ff00]",
+                isListening ? "text-[#b8935a] animate-pulse" : "text-white/30",
+                "transition-colors hover:text-[#b8935a]",
               )}
             >
               Mic
-            </button>
+            </motion.button>
           )}
 
           {isStreaming && (
-            <button
+            <motion.button
               type="button"
               onClick={onStop}
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.92 }}
+              transition={SPRING}
               className={cn(
-                "shrink-0 bg-transparent border-none outline-none cursor-pointer",
-                "font-mono text-[10px] tracking-[0.25em] text-[#c8ff00]/70 uppercase",
-                "transition-colors hover:text-[#c8ff00]",
+                "flex h-14 shrink-0 items-end justify-center px-3 pb-3.5 border-l border-white/10",
+                "bg-transparent outline-none cursor-pointer",
+                "font-mono text-[10px] tracking-[0.25em] text-[#b8935a]/70 uppercase",
+                "transition-colors hover:text-[#b8935a]",
                 "focus-visible:outline-none",
               )}
             >
               Stop
-            </button>
+            </motion.button>
           )}
-          <button
+          <motion.button
             type="button"
             onClick={handleSend}
             disabled={!canSend}
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.92 }}
+            transition={SPRING}
             className={cn(
-              "shrink-0 bg-transparent border-none outline-none cursor-pointer",
-              "font-mono text-[10px] tracking-[0.25em] text-white/30 uppercase",
-              "transition-colors hover:text-[#c8ff00]",
-              "focus-visible:outline-none disabled:pointer-events-none disabled:opacity-0",
+              "flex h-14 w-14 shrink-0 items-end justify-center pb-3.5 border-l border-white/10",
+              "bg-transparent outline-none cursor-pointer",
+              "font-mono text-[10px] tracking-[0.25em] uppercase",
+              canSend ? "text-white/70 hover:text-[#b8935a]" : "text-white/15",
+              "transition-colors",
+              "focus-visible:outline-none disabled:pointer-events-none",
             )}
           >
             Send
-          </button>
+          </motion.button>
         </div>
+
+        <p className="px-4 pb-2 font-mono text-[9px] tracking-wider text-white/20">
+          ⌘+Enter または Enter×2 で送信
+        </p>
       </div>
     </motion.div>
   )

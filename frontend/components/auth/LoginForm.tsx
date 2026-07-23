@@ -48,7 +48,7 @@ export function LoginForm({ onAuthenticated }: LoginFormProps) {
         <p className="font-[family-name:var(--font-syne)] text-2xl font-bold tracking-tight text-white">
           SHISUI
         </p>
-        <span className="mt-1 block h-px w-10 origin-left bg-[#c8ff00]" />
+        <span className="mt-1 block h-px w-10 origin-left bg-[#b8935a]" />
         <p className="mt-6 font-mono text-xs tracking-wider text-white/40 uppercase">
           {mode === "login" ? "おかえりなさい" : "はじめまして"}
         </p>
@@ -60,7 +60,7 @@ export function LoginForm({ onAuthenticated }: LoginFormProps) {
             onChange={(e) => setName(e.target.value)}
             placeholder="名前"
             required
-            className="border-b border-white/15 bg-transparent px-0 py-2 text-base text-white/90 outline-none placeholder:text-white/25 focus:border-[#c8ff00]/60 sm:text-sm"
+            className="border-b border-white/15 bg-transparent px-0 py-2 text-base text-white/90 outline-none placeholder:text-white/25 focus:border-[#b8935a]/60 sm:text-sm"
           />
           <input
             type="password"
@@ -68,7 +68,7 @@ export function LoginForm({ onAuthenticated }: LoginFormProps) {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="パスワード"
             required
-            className="border-b border-white/15 bg-transparent px-0 py-2 text-base text-white/90 outline-none placeholder:text-white/25 focus:border-[#c8ff00]/60 sm:text-sm"
+            className="border-b border-white/15 bg-transparent px-0 py-2 text-base text-white/90 outline-none placeholder:text-white/25 focus:border-[#b8935a]/60 sm:text-sm"
           />
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -76,7 +76,7 @@ export function LoginForm({ onAuthenticated }: LoginFormProps) {
           <button
             type="submit"
             disabled={loading}
-            className="mt-2 bg-[#c8ff00] py-2 font-mono text-xs uppercase tracking-widest text-black transition-opacity hover:opacity-80 disabled:opacity-40"
+            className="mt-2 bg-[#b8935a] py-2 font-mono text-xs uppercase tracking-widest text-black transition-opacity hover:opacity-80 disabled:opacity-40"
           >
             {loading ? "..." : mode === "login" ? "ログイン" : "登録する"}
           </button>

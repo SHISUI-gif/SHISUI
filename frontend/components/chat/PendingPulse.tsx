@@ -20,7 +20,7 @@ export function PendingPulse() {
             y1={50 + 14 * Math.sin((angle * Math.PI) / 180)}
             x2={50 + 24 * Math.cos((angle * Math.PI) / 180)}
             y2={50 + 24 * Math.sin((angle * Math.PI) / 180)}
-            stroke="#c8ff00"
+            stroke="#b8935a"
             strokeWidth={3}
             strokeLinecap="round"
             initial={{ opacity: 0.25 }}
@@ -32,7 +32,7 @@ export function PendingPulse() {
           cx={50}
           cy={50}
           r={9}
-          fill="#c8ff00"
+          fill="#b8935a"
           initial={{ scale: 0.9 }}
           animate={{ scale: [0.9, 1.08, 0.9] }}
           transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}

@@ -55,7 +55,7 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
           ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
           li: ({ children }) => <li>{children}</li>,
           code: ({ children }) => (
-            <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[0.85em]">{children}</code>
+            <code className="bg-white/10 px-1 py-0.5 font-mono text-[0.85em]">{children}</code>
           ),
           pre: ({ children }) => (
             <pre className="mb-2 overflow-x-auto rounded-md bg-white/10 p-3 font-mono text-[0.85em] last:mb-0">
@@ -67,7 +67,7 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#c8ff00] underline underline-offset-2 hover:text-[#c8ff00]/70"
+              className="text-[#b8935a] underline underline-offset-2 hover:text-[#b8935a]/70"
             >
               {children}
             </a>

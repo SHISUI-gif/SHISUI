@@ -1,15 +1,40 @@
 "use client"
 
 import { AnimatePresence, motion } from "framer-motion"
+import { GlowBlob } from "@/components/GlowBlob"
 import { cn } from "@/lib/utils"
 import { DURATION, EASE } from "@/lib/motion"
 import type { Conversation } from "@/lib/types"
+
+/**
+ * 会話一覧の各行をドロワー本体のスライドが落ち着いた後に少し遅れて
+ * カスケード表示させるためのvariants。app/page.tsxのstaggerContainer/fadeUpと
+ * 同じ考え方(EASEを共有・小さめのstaggerChildren)をリスト項目向けに調整したもの。
+ */
+const listContainer = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.04, delayChildren: 0.2 },
+  },
+}
+
+const listItem = {
+  hidden: { opacity: 0, y: 10 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: DURATION.fast, ease: EASE },
+  },
+}
 
 interface SidebarProps {
   isOpen: boolean
   onClose: () => void
   userName: string
   isOwner: boolean
+  sessionCount: number
+  unlockCount: number
+  mood: string | null
   conversations: Conversation[]
   activeConversationId: number | null
   onSelectConversation: (id: number) => void
@@ -36,6 +61,9 @@ export function Sidebar({
   onClose,
   userName,
   isOwner,
+  sessionCount,
+  unlockCount,
+  mood,
   conversations,
   activeConversationId,
   onSelectConversation,
@@ -63,47 +91,76 @@ export function Sidebar({
 
           <motion.div
             key="drawer"
-            className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-white/10 bg-black"
-            initial={{ x: "-100%" }}
+            className="fixed inset-y-4 left-4 z-50 flex w-64 flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0a] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+            initial={{ x: "-120%" }}
             animate={{ x: 0 }}
-            exit={{ x: "-100%" }}
+            exit={{ x: "-120%" }}
             transition={{ duration: DURATION.base, ease: EASE }}
           >
-            <div className="p-4">
+            <GlowBlob className="-left-1/4 -top-1/4 h-2/3 w-2/3 bg-[#b8935a]/[0.08]" />
+
+            <div className="relative p-4">
               <button
                 type="button"
                 onClick={() => {
                   onNewConversation()
                   onClose()
                 }}
-                className="w-full border border-white/15 py-2 font-mono text-xs uppercase tracking-widest text-white/70 transition-colors hover:border-[#c8ff00]/50 hover:text-[#c8ff00]"
+                className="w-full border border-white/15 py-2 font-mono text-xs uppercase tracking-widest text-white/70 transition-colors hover:border-[#b8935a]/50 hover:text-[#b8935a]"
               >
                 + 新しい会話
               </button>
+
+              {/* ホーム画面から移した統計(会話数・解除数・ムード)。
+                  ホームは「情報より志粋の存在感」を優先する1枚絵にしたため、
+                  数値情報はこちらに集約している */}
+              <div className="mt-3 grid grid-cols-3 gap-2 border-t border-white/10 pt-3">
+                <div className="flex flex-col items-start gap-0.5">
+                  <span className="font-mono text-sm text-[#b8935a]">{sessionCount}</span>
+                  <span className="font-mono text-[8px] uppercase tracking-widest text-white/30">
+                    Sessions
+                  </span>
+                </div>
+                <div className="flex flex-col items-start gap-0.5">
+                  <span className="font-mono text-sm text-[#b8935a]">{unlockCount}</span>
+                  <span className="font-mono text-[8px] uppercase tracking-widest text-white/30">
+                    Unlocks
+                  </span>
+                </div>
+                <div className="flex flex-col items-start gap-0.5">
+                  <span className="truncate font-mono text-sm text-[#b8935a]">{mood ?? "—"}</span>
+                  <span className="font-mono text-[8px] uppercase tracking-widest text-white/30">
+                    Mood
+                  </span>
+                </div>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-2">
               {conversations.length === 0 && (
                 <p className="px-2 py-4 font-mono text-[10px] text-white/25">まだ会話がありません</p>
               )}
-              {conversations.map((conversation) => (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  onClick={() => {
-                    onSelectConversation(conversation.id)
-                    onClose()
-                  }}
-                  className={cn(
-                    "block w-full truncate rounded px-3 py-2 text-left text-sm transition-colors",
-                    conversation.id === activeConversationId
-                      ? "bg-white/10 text-white"
-                      : "text-white/50 hover:bg-white/5 hover:text-white/80",
-                  )}
-                >
-                  {conversation.title}
-                </button>
-              ))}
+              <motion.div variants={listContainer} initial="hidden" animate="visible">
+                {conversations.map((conversation) => (
+                  <motion.button
+                    key={conversation.id}
+                    variants={listItem}
+                    type="button"
+                    onClick={() => {
+                      onSelectConversation(conversation.id)
+                      onClose()
+                    }}
+                    className={cn(
+                      "block w-full truncate px-3 py-2 text-left text-sm transition-colors",
+                      conversation.id === activeConversationId
+                        ? "bg-white/10 text-white"
+                        : "text-white/50 hover:bg-white/5 hover:text-white/80",
+                    )}
+                  >
+                    {conversation.title}
+                  </motion.button>
+                ))}
+              </motion.div>
             </div>
 
             <div className="border-t border-white/10 p-4">
@@ -113,7 +170,7 @@ export function Sidebar({
                   onOpenActivityLog()
                   onClose()
                 }}
-                className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
+                className="mb-3 block w-full text-left font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#b8935a]"
               >
                 活動ログ
               </button>
@@ -123,13 +180,13 @@ export function Sidebar({
                   onOpenFeedbackForm()
                   onClose()
                 }}
-                className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
+                className="mb-3 block w-full text-left font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#b8935a]"
               >
                 要望・フィードバックを送る
               </button>
               {isOwner && (
-                <>
-                  <p className="mb-3 font-mono text-[9px] uppercase tracking-widest text-white/25">
+                <div className="mb-3 border-t border-white/10 pt-3">
+                  <p className="mb-2 font-mono text-[9px] uppercase tracking-widest text-white/25">
                     オーナー
                   </p>
                   <button
@@ -138,21 +195,23 @@ export function Sidebar({
                       onOpenFeedbackReview()
                       onClose()
                     }}
-                    className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
+                    className="block w-full text-left font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#b8935a]"
                   >
                     フィードバック確認
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenEvolutionProposals()
-                      onClose()
-                    }}
-                    className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#c8ff00]"
-                  >
-                    承認待ちの修正案
-                  </button>
-                </>
+                  <div className="mt-3 border-t border-white/5 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenEvolutionProposals()
+                        onClose()
+                      }}
+                      className="block w-full text-left font-mono text-[10px] uppercase tracking-widest text-white/40 hover:text-[#b8935a]"
+                    >
+                      承認待ちの修正案
+                    </button>
+                  </div>
+                </div>
               )}
               <p className="truncate font-mono text-xs text-white/40">{userName}</p>
               <button
