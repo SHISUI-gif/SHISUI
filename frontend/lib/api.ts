@@ -82,3 +82,29 @@ export async function* streamChat(
     }
   }
 }
+
+/**
+ * チャット画面を開いたまま数分間発言が無かったとき、志粋から自然に話しかける
+ * 一言を取得する(呼び出し元は一定間隔でこれをポーリングする想定)。
+ * 生成された発話はサーバー側で会話履歴にも保存されるため、リロードしても残る。
+ */
+/**
+ * 志粋がその場で何も生成できなかった場合(ローカルLLMがまれに空応答を返す
+ * 既知の癖)はnullを返す。呼び出し側はnullの場合、吹き出しを追加しないこと。
+ */
+export async function fetchProactiveCheckin(token: string, conversationId: number): Promise<string | null> {
+  const response = await fetch(`/api/conversations/${conversationId}/proactive-checkin`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (response.status === 401) {
+    throw new AuthError("セッションが切れました。もう一度ログインしてください。")
+  }
+  if (!response.ok) {
+    throw new Error(`志粋APIへの接続に失敗しました (HTTP ${response.status})`)
+  }
+
+  const body = await response.json()
+  return (body.content as string | null) ?? null
+}

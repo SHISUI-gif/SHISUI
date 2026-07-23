@@ -21,8 +21,8 @@ import pytest
 
 from src.chat import shisui_chat
 from src.corpus import ingest as literary_ingest
-from src.core import error_log, feedback_log
-from src.memory import hippocampus, neocortex
+from src.core import error_log, evolution, feedback_log
+from src.memory import conversations, hippocampus, neocortex
 
 
 def _fake_embeddings(model: str, prompt: str) -> dict:
@@ -33,9 +33,19 @@ def _fake_embeddings(model: str, prompt: str) -> dict:
 @pytest.fixture(autouse=True)
 def _isolate_all_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(hippocampus, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
+    # conversations.pyはconfig.settingsからHIPPOCAMPUS_DB_PATHを直接importしており、
+    # hippocampus.HIPPOCAMPUS_DB_PATHとは別の名前束縛のため、個別に隔離が必要
+    # (generate_proactive_checkin()がconversations.get_messages()を呼ぶようになったため)
+    monkeypatch.setattr(conversations, "HIPPOCAMPUS_DB_PATH", tmp_path / "hippocampus.sqlite3")
     monkeypatch.setattr(neocortex, "NEOCORTEX_DB_DIR", tmp_path / "neocortex_chroma")
     monkeypatch.setattr(literary_ingest, "LITERARY_CHROMA_DIR", tmp_path / "literary_chroma")
     monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
+    # エラー発生時にstream_shisui_events()がバックグラウンドスレッドで
+    # evolution.generate_fix_proposals()を自動発火するため、デフォルトではno-opにしておく。
+    # 個々のテストがmonkeypatchで上書きすれば、実際に呼ばれたことも検証できる
+    # (スレッドはpytestのmonkeypatch巻き戻し後まで生き残りうるため、本物のollama.chat/
+    # ファイルIOに触れさせないことが重要)
+    monkeypatch.setattr(evolution, "generate_fix_proposals", lambda: [])
 
 
 @pytest.mark.parametrize(
@@ -161,6 +171,37 @@ def test_stream_shisui_reply_logs_unexpected_errors(monkeypatch, tmp_path):
     assert logged[0]["error_type"] == "ResponseError"
 
 
+def test_stream_shisui_events_triggers_background_evolution_scan_on_error(monkeypatch, tmp_path):
+    """エラー発生時、手動で`evolution scan`を実行しなくても自己修復の修正案生成が
+    自主的にバックグラウンドで走ることを検証する(以前は夜間サイクルか手動実行を
+    待つ必要があった)。スレッドの完了を確定的に待つため、threading.Threadを
+    「同期的にtarget()を呼ぶだけの偽物」に差し替える。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+
+    calls = []
+    monkeypatch.setattr(evolution, "generate_fix_proposals", lambda: (calls.append(1), [])[1])
+
+    class SyncThread:
+        def __init__(self, target, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr(shisui_chat.threading, "Thread", SyncThread)
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+        raise ollama.ResponseError("model not found", status_code=404)
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    list(shisui_chat.stream_shisui_reply("テスト", []))
+
+    assert calls == [1]
+
+
 def test_stream_shisui_reply_logs_correction_feedback(monkeypatch, tmp_path):
     """例外が起きていなくても、訂正・不満らしい発言はfeedback_logに残る。"""
     monkeypatch.setattr(feedback_log, "FEEDBACK_LOG_FILE", tmp_path / "feedback_log.json")
@@ -271,3 +312,148 @@ def test_stream_shisui_events_logs_episodes_with_user_and_conversation_id(monkey
     episodes = hippocampus.get_unconsolidated_episodes()
     assert len(episodes) == 2
     assert all(e.user_id == 42 and e.conversation_id == 7 for e in episodes)
+
+
+def test_generate_proactive_checkin_returns_content_and_logs_episode(monkeypatch):
+    conversation_id = conversations.create_conversation(user_id=1, first_message="カフェ巡りの話")
+    hippocampus.log_episode(
+        role="user", content="カフェ巡りの話", source="chat", user_id=1, conversation_id=conversation_id
+    )
+    hippocampus.log_episode(
+        role="assistant", content="いいね!", source="chat", user_id=1, conversation_id=conversation_id
+    )
+
+    def fake_chat(model, messages, stream=False):
+        assert stream is False
+        # 直近の会話履歴がsystemの後に続けて渡っていること
+        assert messages[0]["role"] == "system"
+        assert any(m.get("content") == "カフェ巡りの話" for m in messages[1:])
+        return {"message": {"content": "そういえばさっきのカフェの話、続き聞きたいな"}}
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    result = shisui_chat.generate_proactive_checkin(user_id=1, conversation_id=conversation_id)
+
+    assert result == "そういえばさっきのカフェの話、続き聞きたいな"
+
+    saved = conversations.get_messages(conversation_id, user_id=1)
+    assert saved[-1] == {"role": "assistant", "content": "そういえばさっきのカフェの話、続き聞きたいな"}
+
+
+def test_generate_proactive_checkin_uses_groq_when_enabled(monkeypatch):
+    conversation_id = conversations.create_conversation(user_id=1, first_message="やあ")
+    hippocampus.log_episode(
+        role="user", content="やあ", source="chat", user_id=1, conversation_id=conversation_id
+    )
+
+    class _FakeSettings:
+        use_groq = True
+        groq_chat_model = "llama-3.3-70b"
+        ollama_model = "qwen2.5"
+
+    monkeypatch.setattr(shisui_chat, "settings", _FakeSettings())
+
+    called = {}
+
+    def fake_groq_chat(model, messages, stream=False):
+        called["model"] = model
+        return {"message": {"content": "元気にしてる?"}}
+
+    monkeypatch.setattr(shisui_chat.groq_client, "chat", fake_groq_chat)
+
+    result = shisui_chat.generate_proactive_checkin(user_id=1, conversation_id=conversation_id)
+
+    assert result == "元気にしてる?"
+    assert called["model"] == "llama-3.3-70b"
+
+
+def test_generate_proactive_checkin_limits_history_to_recent_messages(monkeypatch):
+    conversation_id = conversations.create_conversation(user_id=1, first_message="最初")
+    for i in range(20):
+        hippocampus.log_episode(
+            role="user" if i % 2 == 0 else "assistant",
+            content=f"メッセージ{i}",
+            source="chat",
+            user_id=1,
+            conversation_id=conversation_id,
+        )
+
+    captured = {}
+
+    def fake_chat(model, messages, stream=False):
+        captured["messages"] = messages
+        return {"message": {"content": "おかえり"}}
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    shisui_chat.generate_proactive_checkin(user_id=1, conversation_id=conversation_id)
+
+    # system 1件 + 直近10件のみで、20件全部を積み上げていないこと
+    assert len(captured["messages"]) == 11
+
+
+def test_generate_proactive_checkin_retries_once_on_empty_response(monkeypatch):
+    """ローカルLLMがまれに空応答を返す既知の癖への対応: 1回だけ取り直しを試みる。"""
+    conversation_id = conversations.create_conversation(user_id=1, first_message="やあ")
+    hippocampus.log_episode(
+        role="user", content="やあ", source="chat", user_id=1, conversation_id=conversation_id
+    )
+
+    call_count = {"n": 0}
+
+    def fake_chat(model, messages, stream=False):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return {"message": {"content": ""}}
+        return {"message": {"content": "おかえり、元気にしてた?"}}
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    result = shisui_chat.generate_proactive_checkin(user_id=1, conversation_id=conversation_id)
+
+    assert result == "おかえり、元気にしてた?"
+    assert call_count["n"] == 2
+
+
+def test_generate_proactive_checkin_returns_none_and_does_not_log_when_still_empty(monkeypatch):
+    """1回取り直しても空のままなら、Noneを返し履歴にも保存しない
+    (空応答を保存すると、次回以降の生成が悪循環的に空になりやすくなるため)。"""
+    conversation_id = conversations.create_conversation(user_id=1, first_message="やあ")
+    hippocampus.log_episode(
+        role="user", content="やあ", source="chat", user_id=1, conversation_id=conversation_id
+    )
+
+    monkeypatch.setattr(ollama, "chat", lambda model, messages, stream=False: {"message": {"content": "   "}})
+
+    result = shisui_chat.generate_proactive_checkin(user_id=1, conversation_id=conversation_id)
+
+    assert result is None
+    saved = conversations.get_messages(conversation_id, user_id=1)
+    assert all(m["content"].strip() for m in saved)  # 空のエントリが追加されていないこと
+
+
+def test_generate_proactive_checkin_filters_out_past_empty_entries_from_history(monkeypatch):
+    """過去にこの不具合で保存されてしまった空のアシスタント発言が履歴に残っていても、
+    LLMへ渡す会話履歴からは除外する(空応答の連鎖を断ち切るため)。"""
+    conversation_id = conversations.create_conversation(user_id=1, first_message="やあ")
+    hippocampus.log_episode(
+        role="user", content="やあ", source="chat", user_id=1, conversation_id=conversation_id
+    )
+    hippocampus.log_episode(
+        role="assistant", content="", source="proactive_checkin", user_id=1, conversation_id=conversation_id
+    )
+    hippocampus.log_episode(
+        role="user", content="いる?", source="chat", user_id=1, conversation_id=conversation_id
+    )
+
+    captured = {}
+
+    def fake_chat(model, messages, stream=False):
+        captured["messages"] = messages
+        return {"message": {"content": "うん、いるよ"}}
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    shisui_chat.generate_proactive_checkin(user_id=1, conversation_id=conversation_id)
+
+    assert all(m.get("content", "").strip() for m in captured["messages"])

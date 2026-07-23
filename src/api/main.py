@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from rich.console import Console
 
 from config.settings import settings
-from src.chat.shisui_chat import stream_shisui_events
+from src.chat.shisui_chat import generate_proactive_checkin, stream_shisui_events
 from src.core import activity_log, auth, evolution, user_feedback
 from src.corpus.scheduler import maybe_run_nightly_archive_crawl
 from src.debate.scheduler import maybe_run_nightly_debate_autonomous
@@ -321,3 +321,18 @@ def chat(request: ChatRequest, authorization: str | None = Header(None)) -> Stre
             _generation_lock.release()
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
+
+@app.post("/api/conversations/{conversation_id}/proactive-checkin")
+def proactive_checkin(conversation_id: int, authorization: str | None = Header(None)) -> dict:
+    """チャット画面を開いたまま数分間発言が無かったとき、志粋から自然に話しかける
+    一言を生成して返す(フロントエンドが定期的にポーリングして呼ぶ)。
+
+    生成した発話はhippocampus.log_episode()経由で通常のアシスタント発言として
+    会話履歴に保存されるため、会話を読み込み直しても消えない。他人の
+    conversation_idを渡された場合はconversations.get_messages()が空リストを
+    返すため、不自然な(履歴を踏まえない)発話になるだけで情報は漏れない。
+    """
+    user_id = _require_user_id(authorization)
+    content = generate_proactive_checkin(user_id, conversation_id)
+    return {"content": content}

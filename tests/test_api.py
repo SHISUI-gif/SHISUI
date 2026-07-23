@@ -121,6 +121,45 @@ def test_chat_with_valid_token_streams_response(client, monkeypatch):
     assert "了解" in response.text
 
 
+def test_proactive_checkin_without_auth_returns_401(client):
+    response = client.post("/api/conversations/1/proactive-checkin")
+    assert response.status_code == 401
+
+
+def test_proactive_checkin_returns_content_and_persists_to_history(client, monkeypatch):
+    monkeypatch.setattr(ollama, "chat", _fake_chat)
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+
+    client.post(
+        "/api/chat",
+        json={"message": "カフェの話", "history": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    conversation_id = client.get(
+        "/api/conversations", headers={"Authorization": f"Bearer {token}"}
+    ).json()[0]["id"]
+
+    def fake_checkin_chat(model, messages, stream=False):
+        return {"message": {"content": "そういえばさっきの話、続き聞きたいな"}}
+
+    monkeypatch.setattr(ollama, "chat", fake_checkin_chat)
+
+    response = client.post(
+        f"/api/conversations/{conversation_id}/proactive-checkin",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "そういえばさっきの話、続き聞きたいな"
+
+    history = client.get(
+        f"/api/conversations/{conversation_id}/messages",
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+    assert history[-1] == {"role": "assistant", "content": "そういえばさっきの話、続き聞きたいな"}
+
+
 def test_conversations_list_requires_auth(client):
     response = client.get("/api/conversations")
     assert response.status_code == 401
@@ -256,7 +295,7 @@ def test_avatar_returns_unlocked_items_with_catalog_metadata(client):
     assert len(unlocked) == 1
     assert unlocked[0]["slug"] == "bookish_glasses"
     assert unlocked[0]["display_name"] == "読書メガネ"
-    assert unlocked[0]["asset"] == "bookish_glasses.svg"
+    assert unlocked[0]["asset"] == "bookish_glasses.png"
 
 
 def test_avatar_items_are_scoped_per_user(client):

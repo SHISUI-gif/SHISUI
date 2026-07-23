@@ -13,24 +13,28 @@ from __future__ import annotations
 
 import concurrent.futures
 import re
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 
 import ollama
+from rich.console import Console
 
 from config.settings import settings
 from src.chat import emotion
 from src.chat.model_router import route_model
-from src.common import groq_client
+from src.common import groq_client, openrouter_client
 from src.common.persona import SHISUI_SYSTEM_PROMPT
 from src.common.tools import ALL_TOOL_SCHEMAS, AVAILABLE_TOOLS
-from src.core import error_log
+from src.core import error_log, evolution
 from src.core import feedback_log
 from src.corpus import context as literary_context
 from src.memory import context as memory_context
-from src.memory import hippocampus, neocortex
+from src.memory import conversations, hippocampus, neocortex
 from src.study import report as study_report
+
+console = Console()
 
 
 @dataclass
@@ -79,10 +83,34 @@ def stream_shisui_events(
         # ユーザーには要点だけを見せつつ、完全なトレースバックは自己修復プロトコル
         # (src/core/evolution.py)が後で読めるようエラーログに残しておく
         error_log.log_error(source="stream_shisui_events", exc=e)
+        _trigger_background_evolution_scan()
         yield ChatEvent(
             type="content",
             text=f"⚠️ エラーが発生しちゃった:{str(e)}\nOllamaが起動しているか、モデル名が正しいか確認してね!",
         )
+
+
+def _trigger_background_evolution_scan() -> None:
+    """エラー発生直後に、修正案生成(自己修復プロトコル)を自主的にバックグラウンドで
+    走らせる。以前は`python app.py evolution scan`を手動実行するまで修正案が
+    生成されず、夜間サイクルを待たないと気づけなかった。生成にはLLM呼び出しが
+    伴うため、今エラーになった会話のストリームは決してブロックしない
+    (別スレッドで実行し、失敗しても会話には一切影響しない)。
+    生成した修正案自体は今まで通りpending/に保存されるだけで、適用は
+    那由多さんの明示的な承認が必要(evolution.pyの既存の安全境界は変更しない)。
+    """
+
+    def _run() -> None:
+        try:
+            proposals = evolution.generate_fix_proposals()
+            if proposals:
+                console.print(
+                    f"[dim]🔧 自己修復: エラーから修正案{len(proposals)}件を自動生成しました[/dim]"
+                )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]自己修復の自動実行に失敗しました(会話は続行します): {exc}[/yellow]")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 _MODEL_SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)b", re.IGNORECASE)
@@ -114,9 +142,14 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
     包む必要がある。モデルの能力チェックは生成開始前にサーバー側で行われるため、
     このエラーが起きる時点でチャンクは1つも返っていない(取りこぼしの心配はない)。
 
-    Groq経由(settings.use_groq)の場合は、そもそもthink/keep_aliveの概念が無いため
-    このフォールバック処理自体が不要で、素直にストリーミングするだけでよい。
+    Groq経由(settings.use_groq)・OpenRouter経由(コーディング質問の限定的な
+    振り分け先、src/chat/model_router.py参照)の場合は、そもそもthink/keep_aliveの
+    概念が無いためこのフォールバック処理自体が不要で、素直にストリーミングするだけでよい。
     """
+    if model == settings.openrouter_coding_model and settings.openrouter_api_key:
+        yield from openrouter_client.chat(model=model, messages=messages, stream=True)
+        return
+
     if settings.use_groq:
         yield from groq_client.chat(model=model, messages=messages, stream=True)
         return
@@ -289,6 +322,62 @@ def _stream_shisui_events_inner(
             user_id=user_id,
             conversation_id=conversation_id,
         )
+
+
+PROACTIVE_CHECKIN_INSTRUCTION = (
+    "\n\n【追加指示】ユーザーはこの会話でここ数分、何も発言していません。あなたから自然に"
+    "一言、様子を伺うか会話を続けるメッセージを送ってください。「まだ見てる?」のような"
+    "機械的な催促文にはせず、直前のやり取りの内容を踏まえた自然な一言(1〜2文程度)に"
+    "すること。相手が忙しい可能性もあるので、催促がましくならないよう軽いトーンで。"
+    "同じような文言を毎回繰り返さないこと。"
+)
+
+
+def _call_proactive_checkin_model(messages: list[dict]) -> str:
+    model = settings.groq_chat_model if settings.use_groq else settings.ollama_model
+    if settings.use_groq:
+        response = groq_client.chat(model=model, messages=messages, stream=False)
+    else:
+        response = ollama.chat(model=model, messages=messages, stream=False)
+    return response["message"]["content"].strip()
+
+
+def generate_proactive_checkin(user_id: int, conversation_id: int) -> str | None:
+    """チャット画面を開いたまま数分間発言が無かったユーザーに対し、志粋から自然に
+    話しかける一言を生成する。何も生成できなかった場合はNoneを返す(空文字列を
+    会話履歴に保存しない・フロントエンドにも空の吹き出しを出させないため)。
+
+    通常のstream_shisui_events()と違い、新しいユーザー発言への応答ではなく、
+    志粋側から会話を再開する発話のため、記憶検索・ツール判定・モデルルーティングは
+    行わず、直近の会話履歴を踏まえた軽量な1回のLLM呼び出しのみで完結させる
+    (フロントエンドが数分おきに定期チェックする性質上、待たせすぎない応答速度を優先)。
+    """
+    history = conversations.get_messages(conversation_id, user_id)
+    # 過去にLLMが空応答を返し、そのまま履歴に保存されてしまった発言(既知の不具合、
+    # 現在は保存前に弾いているが過去分が残っている可能性がある)を除外する。
+    # 空の発言が履歴に混ざっていると、モデルが「アシスタントは黙ることが多い」
+    # という文脈を学習してしまい、空応答が連鎖的に増える悪循環になるため。
+    recent_history = [h for h in history if h.get("content", "").strip()][-10:]
+
+    messages = [{"role": "system", "content": SHISUI_SYSTEM_PROMPT + PROACTIVE_CHECKIN_INSTRUCTION}]
+    messages.extend(recent_history)
+
+    content = _call_proactive_checkin_model(messages)
+    if not content:
+        # ローカルLLMがまれに空応答を返すことがある(既知の癖)。1回だけ
+        # 取り直してみて、それでも空ならこの回はスキップする。
+        content = _call_proactive_checkin_model(messages)
+    if not content:
+        return None
+
+    hippocampus.log_episode(
+        role="assistant",
+        content=content,
+        source="proactive_checkin",
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+    return content
 
 
 def stream_shisui_reply(
