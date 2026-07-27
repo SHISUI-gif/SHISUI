@@ -2,6 +2,8 @@
 import dataclasses
 import subprocess
 
+import groq
+import httpx
 import ollama
 import pytest
 
@@ -59,6 +61,39 @@ def test_generate_fix_proposals_creates_pending_patch(isolated_evolution, monkey
     assert "1 / 0" in proposals[0].diff or "return 0" in proposals[0].diff
     assert error_log.get_unreviewed_errors() == []
     assert len(list(pending_dir.glob("*.json"))) == 1
+
+
+def test_generate_fix_text_falls_back_to_secondary_groq_model_on_rate_limit(monkeypatch):
+    """2026-07-28に本番で実際に発生: groq_coding_modelがGroq無料枠のTPD上限に
+    達し、自己修復・フィードバック自動反映の生成呼び出しがNO_DIFFを量産して
+    いた(shisui_chat.pyの会話生成には既にこのフォールバックがあったが、
+    こちらには無かった)。"""
+    monkeypatch.setattr(
+        evolution,
+        "settings",
+        dataclasses.replace(
+            evolution.settings,
+            use_groq=True,
+            groq_coding_model="qwen/qwen3.6-27b",
+            groq_fallback_chat_model="llama-3.3-70b-versatile",
+        ),
+    )
+
+    fake_response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/x"))
+    calls = []
+
+    def fake_groq_chat(model, messages):
+        calls.append(model)
+        if model == "qwen/qwen3.6-27b":
+            raise groq.RateLimitError("rate_limit_exceeded", response=fake_response, body=None)
+        return {"message": {"content": "フォールバックで生成した修正案"}}
+
+    monkeypatch.setattr(evolution.groq_client, "chat", fake_groq_chat)
+
+    result = evolution._generate_fix_text("何かのプロンプト")
+
+    assert result == "フォールバックで生成した修正案"
+    assert calls == ["qwen/qwen3.6-27b", "llama-3.3-70b-versatile"]
 
 
 def test_generate_fix_proposals_skips_when_file_not_in_project(isolated_evolution, monkeypatch):

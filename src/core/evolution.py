@@ -24,6 +24,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import groq
 import ollama
 
 from config.settings import BASE_DIR, PENDING_PATCHES_DIR, settings
@@ -91,11 +92,23 @@ def _save_proposal(proposal: FixProposal) -> None:
 
 def _generate_fix_text(prompt: str) -> str:
     """修正案の生成呼び出し。use_groq時はローカルにevolution_fix_modelが無い
-    環境(例: 埋め込み専用OllamaしかないOracle VM)でも動くようGroqを使う。"""
+    環境(例: 埋め込み専用OllamaしかないOracle VM)でも動くようGroqを使う。
+
+    groq_coding_modelがGroq無料枠のTPD(1日あたりトークン)上限に達した場合は、
+    shisui_chat.py:_stream_with_think_fallback()と同じく、別プールの
+    groq_fallback_chat_modelへ1回だけフォールバックする(2026-07-28、
+    自己修復・フィードバック自動反映の生成呼び出しにはこのフォールバックが
+    無く、日中の会話でTPDを使い切った直後にNO_DIFFを量産してしまっていた
+    ことが実際に発覚した)。"""
     if settings.use_groq:
-        response = groq_client.chat(
-            model=settings.groq_coding_model, messages=[{"role": "user", "content": prompt}]
-        )
+        try:
+            response = groq_client.chat(
+                model=settings.groq_coding_model, messages=[{"role": "user", "content": prompt}]
+            )
+        except groq.RateLimitError:
+            response = groq_client.chat(
+                model=settings.groq_fallback_chat_model, messages=[{"role": "user", "content": prompt}]
+            )
     else:
         response = ollama.chat(
             model=settings.evolution_fix_model, messages=[{"role": "user", "content": prompt}]
