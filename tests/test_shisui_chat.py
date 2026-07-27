@@ -14,6 +14,7 @@ stream_shisui_reply()はuser_id/conversation_idを省略するとデフォルト
 このファイル全体にautouseで最小限の隔離をかけることで、個々のテストが
 明示的に隔離し忘れても本番データに触れないようにする。
 """
+import dataclasses
 import hashlib
 
 import ollama
@@ -46,6 +47,12 @@ def _isolate_all_storage(tmp_path, monkeypatch):
     # (スレッドはpytestのmonkeypatch巻き戻し後まで生き残りうるため、本物のollama.chat/
     # ファイルIOに触れさせないことが重要)
     monkeypatch.setattr(evolution, "generate_fix_proposals", lambda: [])
+    # このマシンの実際の.env(USE_GROQ)に関わらず決定的に振る舞わせる。個々の
+    # テストがGroq経由の挙動を検証したい場合は、自分でshisui_chat.settingsを
+    # 上書きすればこの既定値を後から上書きできる(モンキーパッチは後勝ち)。
+    # 2026-07-27、Oracle VM(USE_GROQ=true)で実際にこれが無いテストだけ
+    # 実物のGroq APIを叩いてしまい、遅延・失敗する実害が出て気づいた。
+    monkeypatch.setattr(shisui_chat, "settings", dataclasses.replace(shisui_chat.settings, use_groq=False))
 
 
 @pytest.mark.parametrize(

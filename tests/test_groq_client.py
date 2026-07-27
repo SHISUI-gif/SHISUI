@@ -93,6 +93,52 @@ def test_chat_streaming_yields_ollama_shaped_chunks(monkeypatch):
     assert chunks == [{"message": {"content": "こん"}}, {"message": {"content": "にちは"}}]
 
 
+def test_chat_non_streaming_splits_think_tags_into_thinking_field(monkeypatch):
+    """2026-07-27に発覚した実バグの回帰テスト: qwen3.6系はOllamaの専用thinking
+    フィールドの代わりに<think>...</think>を地の文でcontentに埋め込んでくる。
+    そのまま返すとユーザーに生の思考過程がそのまま表示されてしまう。"""
+    fake_response = types.SimpleNamespace(
+        choices=[
+            types.SimpleNamespace(
+                message=_fake_message(content="<think>ユーザーは天気を知りたがっている。</think>晴れだよ!")
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        groq_client, "_get_client", lambda: _FakeClient(_FakeChatCompletions(response=fake_response))
+    )
+
+    result = groq_client.chat(model="qwen/qwen3.6-27b", messages=[])
+
+    assert result["message"]["content"] == "晴れだよ!"
+    assert result["message"]["thinking"] == "ユーザーは天気を知りたがっている。"
+
+
+def test_chat_streaming_splits_think_tags_across_chunk_boundaries(monkeypatch):
+    """<think>タグ自体がチャンクの境目で分割されるケース(実際のストリーミングで
+    十分起こりうる)でも、生のタグ文字列がcontentに漏れ出さないことを確認する。"""
+    pieces = ["<thi", "nk>考え中", "...</thi", "nk>", "結論はこう", "だよ"]
+    chunks = [
+        types.SimpleNamespace(choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content=p))])
+        for p in pieces
+    ]
+    monkeypatch.setattr(
+        groq_client, "_get_client", lambda: _FakeClient(_FakeChatCompletions(stream_chunks=chunks))
+    )
+
+    events = list(groq_client.chat(model="qwen/qwen3.6-27b", messages=[], stream=True))
+
+    thinking_text = "".join(
+        e["message"]["thinking"] for e in events if "thinking" in e["message"]
+    )
+    content_text = "".join(
+        e["message"]["content"] for e in events if "content" in e["message"]
+    )
+    assert thinking_text == "考え中..."
+    assert content_text == "結論はこうだよ"
+    assert "<think>" not in content_text and "</think>" not in content_text
+
+
 def test_embeddings_returns_ollama_shaped_response(monkeypatch):
     monkeypatch.setattr(
         groq_client, "_get_client", lambda: _FakeClient(embeddings=_FakeEmbeddings([0.1, 0.2, 0.3]))

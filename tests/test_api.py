@@ -3,6 +3,7 @@
 実際のOllamaサーバーには接続せず、ollama.chat/ollama.embeddingsをモック化して
 認証・会話のアクセス制御ロジックのみを検証する。
 """
+import dataclasses
 import hashlib
 import threading
 import time
@@ -13,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api import main
+from src.chat import shisui_chat
 from src.core import activity_log, auth, evolution, user_feedback
 from src.corpus import ingest as literary_ingest
 from src.memory import avatar, conversations, hippocampus, neocortex
@@ -43,6 +45,9 @@ def _isolate_storage(tmp_path, monkeypatch):
     (tmp_path / "pending").mkdir()
     monkeypatch.setattr(user_feedback, "USER_FEEDBACK_FILE", tmp_path / "user_feedback.json")
     monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
+    # このマシンの実際の.env(USE_GROQ)に関わらず決定的に振る舞わせる
+    # (2026-07-27、Oracle VMのUSE_GROQ=trueで実物のGroq APIを叩いてしまい発覚)。
+    monkeypatch.setattr(shisui_chat, "settings", dataclasses.replace(shisui_chat.settings, use_groq=False))
 
 
 @pytest.fixture

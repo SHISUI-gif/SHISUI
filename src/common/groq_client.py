@@ -90,14 +90,91 @@ def _messages_to_groq_shape(messages: list[dict]) -> list[dict]:
     return converted
 
 
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def _safe_emit_length(buffer: str, tag: str) -> int:
+    """bufferの末尾が次のチャンクでtagの続きになるかもしれない部分一致の場合、
+    その部分を除いた「今すぐ確定して出力してよい」長さを返す(タグがチャンクの
+    境目をまたいで分割される可能性があるため、確定するまで保留する)。"""
+    for length in range(min(len(tag) - 1, len(buffer)), 0, -1):
+        if buffer.endswith(tag[:length]):
+            return len(buffer) - length
+    return len(buffer)
+
+
+def _split_think_tags(text: str) -> tuple[str, str]:
+    """テキスト全体から<think>...</think>ブロックを取り除き、(thinking, content)を返す。
+    非ストリーミング呼び出し用(全文が一度に手元にあるので境界跨ぎの心配が無い)。"""
+    thinking_parts, content_parts = [], []
+    pos = 0
+    while True:
+        start = text.find(_THINK_OPEN, pos)
+        if start == -1:
+            content_parts.append(text[pos:])
+            break
+        content_parts.append(text[pos:start])
+        end = text.find(_THINK_CLOSE, start)
+        if end == -1:
+            thinking_parts.append(text[start + len(_THINK_OPEN):])
+            break
+        thinking_parts.append(text[start + len(_THINK_OPEN):end])
+        pos = end + len(_THINK_CLOSE)
+    return "".join(thinking_parts).strip(), "".join(content_parts)
+
+
+class _ThinkTagStreamSplitter:
+    """Groqの一部モデル(qwen3.6系等)は、Ollamaのような専用の"thinking"フィールドを
+    持たず、<think>...</think>を地の文としてcontentストリームに混ぜて返してくる。
+    そのままだと推論過程がユーザーへの返答として丸見えになってしまう
+    (実際に2026-07-27、志粋の生の思考過程がそのままチャットに表示される事故が発生)。
+    ここでタグを検出し、Ollama側と同じ"thinking"/"content"の2種類に分けて流す。
+    チャンクの境目でタグが分割される可能性があるため、状態を跨いでバッファする。
+    """
+
+    def __init__(self) -> None:
+        self._in_thinking = False
+        self._buffer = ""
+
+    def feed(self, text: str) -> list[tuple[str, str]]:
+        """(kind, text)のリストを返す。kindは"thinking"か"content"。"""
+        self._buffer += text
+        events: list[tuple[str, str]] = []
+        while self._buffer:
+            tag = _THINK_CLOSE if self._in_thinking else _THINK_OPEN
+            idx = self._buffer.find(tag)
+            if idx != -1:
+                if idx > 0:
+                    events.append(("thinking" if self._in_thinking else "content", self._buffer[:idx]))
+                self._buffer = self._buffer[idx + len(tag):]
+                self._in_thinking = not self._in_thinking
+                continue
+            safe_len = _safe_emit_length(self._buffer, tag)
+            if safe_len > 0:
+                events.append(("thinking" if self._in_thinking else "content", self._buffer[:safe_len]))
+            self._buffer = self._buffer[safe_len:]
+            break
+        return events
+
+    def flush(self) -> list[tuple[str, str]]:
+        if not self._buffer:
+            return []
+        events = [("thinking" if self._in_thinking else "content", self._buffer)]
+        self._buffer = ""
+        return events
+
+
 def _stream_chunks(response) -> Iterator[dict]:
+    splitter = _ThinkTagStreamSplitter()
     for chunk in response:
         delta = chunk.choices[0].delta
-        message: dict = {}
-        if delta.content:
-            message["content"] = delta.content
-        if message:
-            yield {"message": message}
+        if not delta.content:
+            continue
+        for kind, piece in splitter.feed(delta.content):
+            yield {"message": {kind: piece}}
+    for kind, piece in splitter.flush():
+        yield {"message": {kind: piece}}
 
 
 def chat(
@@ -121,13 +198,15 @@ def chat(
         return _stream_chunks(response)
 
     choice_message = response.choices[0].message
-    return {
-        "message": {
-            "role": choice_message.role,
-            "content": choice_message.content or "",
-            "tool_calls": _tool_calls_to_ollama_shape(choice_message.tool_calls),
-        }
+    thinking, content = _split_think_tags(choice_message.content or "")
+    message: dict = {
+        "role": choice_message.role,
+        "content": content,
+        "tool_calls": _tool_calls_to_ollama_shape(choice_message.tool_calls),
     }
+    if thinking:
+        message["thinking"] = thinking
+    return {"message": message}
 
 
 def embeddings(model: str, prompt: str) -> dict:

@@ -16,6 +16,9 @@ def isolated_evolution(monkeypatch, tmp_path):
     monkeypatch.setattr(evolution, "BASE_DIR", tmp_path)
     monkeypatch.setattr(evolution, "PENDING_PATCHES_DIR", pending_dir)
     monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+    # このマシンの実際の.env(USE_GROQ)に関わらず_generate_fix_text()がollama.chatを
+    # 使うと決定的に振る舞わせる(2026-07-27、Oracle VMのUSE_GROQ=trueで発覚)。
+    monkeypatch.setattr(evolution, "settings", dataclasses.replace(evolution.settings, use_groq=False))
     return tmp_path, pending_dir
 
 
