@@ -264,6 +264,15 @@ def apply_proposal(proposal_id: str, *, run_tests: bool = False) -> tuple[bool, 
                 subprocess.run(
                     ["git", "checkout", "--", "."], cwd=BASE_DIR, capture_output=True, text=True
                 )
+                # git checkoutは追跡済みファイルの変更しか戻さない。パッチが新規
+                # ファイルを作成していた場合、それは未追跡のまま残ってしまい、
+                # 次回以降の適用が全て「作業ツリーが汚れている」で失敗し続ける
+                # 事故になる(実際に起きた)。関数の先頭でクリーンな状態を確認
+                # 済みなので、ここで生まれた未追跡ファイルは全てこのパッチに
+                # 由来すると分かっており、git cleanで安全に削除できる。
+                subprocess.run(
+                    ["git", "clean", "-fd"], cwd=BASE_DIR, capture_output=True, text=True
+                )
                 return False, f"テストが失敗したため適用を取り消しました:\n{test_output}"
 
         subprocess.run(

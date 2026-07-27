@@ -196,6 +196,8 @@ def test_apply_proposal_reverts_when_tests_fail(isolated_evolution, monkeypatch)
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         if cmd[:2] == ["git", "checkout"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd[:2] == ["git", "clean"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
         if cmd[:2] == ["git", "commit"]:
             raise AssertionError("テスト失敗時はコミットしてはいけない")
         raise AssertionError(f"想定外のコマンド: {cmd}")
@@ -208,6 +210,9 @@ def test_apply_proposal_reverts_when_tests_fail(isolated_evolution, monkeypatch)
     assert ok is False
     assert "テストが失敗" in message
     assert any(cmd[:2] == ["git", "checkout"] for cmd in calls)
+    # git checkoutは追跡済みファイルの変更しか戻さないため、パッチが新規作成
+    # したファイルが未追跡のまま残らないよう、git cleanも必ず呼ぶべき
+    assert any(cmd[:2] == ["git", "clean"] for cmd in calls)
     assert not any(cmd[:2] == ["git", "commit"] for cmd in calls)
     # テストに落ちた場合でも提案自体は残り、原因調査・再挑戦の余地を残す
     assert (pending_dir / "abc123.json").exists()
@@ -239,6 +244,8 @@ def test_apply_proposal_reverts_when_verification_command_itself_raises(isolated
         if cmd[:2] == ["git", "apply"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         if cmd[:2] == ["git", "checkout"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd[:2] == ["git", "clean"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="")
         if cmd[:2] == ["git", "commit"]:
             raise AssertionError("検証コマンドが例外を投げた場合はコミットしてはいけない")

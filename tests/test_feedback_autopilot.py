@@ -47,6 +47,8 @@ def _fake_git_run(applies_ok=True):
             return subprocess.CompletedProcess(cmd, 0 if applies_ok else 1, stdout="", stderr="")
         if cmd[:2] == ["git", "checkout"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd[:2] == ["git", "clean"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
         if cmd[:2] == ["git", "commit"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="")
         raise AssertionError(f"想定外のコマンド: {cmd}")
