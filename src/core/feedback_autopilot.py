@@ -80,7 +80,12 @@ def _select_file(content: str) -> str | None:
     text = evolution._generate_fix_text(
         FILE_SELECTION_PROMPT.format(content=content, candidates=candidates)
     )
-    choice = text.strip().splitlines()[0].strip()
+    lines = text.strip().splitlines()
+    if not lines:
+        # モデルが空応答を返すことがある(ローカルLLMの既知の癖と同種)。
+        # "NONE"と同じ「該当なし」として扱い、クラッシュさせない。
+        return None
+    choice = lines[0].strip()
     return choice if choice in _CANDIDATE_FILES else None
 
 

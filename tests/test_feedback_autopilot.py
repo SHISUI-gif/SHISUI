@@ -124,6 +124,15 @@ def test_process_feedback_leaves_for_human_review_when_tests_fail(isolated, monk
     assert saved["reviewed"] is False
 
 
+def test_select_file_returns_none_on_empty_llm_response(monkeypatch):
+    """2026-07-28に本番で実際に発生: LLMが空文字列(改行すら無い)を返すと
+    text.strip().splitlines()[0]がIndexErrorでクラッシュしていた。"NONE"と
+    同じ「該当なし」として扱うべき。"""
+    monkeypatch.setattr(evolution, "_generate_fix_text", lambda prompt: "")
+
+    assert feedback_autopilot._select_file("何かの要望") is None
+
+
 def test_process_feedback_skips_already_reviewed(isolated, monkeypatch):
     record = user_feedback.submit_feedback(1, "那由多", "何か要望")
     user_feedback.mark_reviewed(record["id"])
