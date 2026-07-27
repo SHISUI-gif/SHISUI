@@ -132,9 +132,9 @@ class Settings:
     use_groq: bool = os.getenv("USE_GROQ", "false").lower() == "true"
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_classifier_model: str = os.getenv("GROQ_CLASSIFIER_MODEL", "llama-3.1-8b-instant")
-    groq_coding_model: str = os.getenv("GROQ_CODING_MODEL", "qwen/qwen3-32b")
-    groq_reasoning_model: str = os.getenv("GROQ_REASONING_MODEL", "qwen/qwen3-32b")
-    groq_chat_model: str = os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3-32b")
+    groq_coding_model: str = os.getenv("GROQ_CODING_MODEL", "qwen/qwen3.6-27b")
+    groq_reasoning_model: str = os.getenv("GROQ_REASONING_MODEL", "qwen/qwen3.6-27b")
+    groq_chat_model: str = os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3.6-27b")
 
     # OpenRouter(無料枠、コーディング質問だけ限定で使う)。
     # OpenRouterの無料枠(:freeモデル)は1日50〜1000リクエストとGroqよりかなり
