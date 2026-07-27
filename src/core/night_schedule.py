@@ -6,8 +6,17 @@ src/debate/scheduler.py)で同じ判定ロジックを重複させないよう�
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from config.settings import settings
+
+# 「夜眠っている間」は那由多さんの実際の生活時間帯(日本時間)を指す。
+# サーバーがどのタイムゾーンで動いていても正しく判定できるよう、
+# datetime.now()(サーバーのシステム時刻)ではなく明示的にJSTを使う
+# (2026-07-28、Oracle Cloud VM(既定UTC)へ移行した際、night_mode_start_hour等を
+# UTCのまま評価してしまい、日本時間の夜間帯と9時間ズレて睡眠モードが
+# 意図した時間に一度も走っていなかった実際の障害への対処)。
+_JST = ZoneInfo("Asia/Tokyo")
 
 
 def is_within_night_window(now: datetime | None = None) -> bool:
@@ -22,7 +31,7 @@ def current_night_key(now: datetime | None = None) -> str | None:
     同じ「夜」として扱えるよう、夜が始まった側の日付をキーにする。
     範囲外なら None を返す。
     """
-    now = now or datetime.now()
+    now = now or datetime.now(_JST)
     start = now.replace(
         hour=settings.night_mode_start_hour, minute=0, second=0, microsecond=0
     )

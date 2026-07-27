@@ -55,3 +55,24 @@ def test_current_night_key_none_outside_window():
 def test_current_night_key_none_right_after_end():
     now = _dt(2026, 3, 6, 6, 31)
     assert night_schedule.current_night_key(now) is None
+
+
+def test_current_night_key_uses_jst_regardless_of_server_timezone(monkeypatch):
+    """2026-07-28の回帰テスト: サーバーがUTCで動いていても(Oracle Cloud VM等)、
+    「夜」の判定は那由多さんの実際の生活時間帯である日本時間で行われるべき。
+    以前はdatetime.now()(サーバーのシステム時刻)をそのまま使っており、VMの
+    UTC時刻を23:00〜6:30のJST想定の窓にそのまま当てはめてしまい、日本時間の
+    夜間帯と9時間ズレていた(睡眠モードが意図した時間に一度も走っていなかった)。"""
+    captured = {}
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            captured["tz"] = tz
+            # UTCで13:00(=JSTで深夜2:00)相当のタイミングを模擬
+            return datetime(2026, 7, 28, 2, 0, tzinfo=tz)
+
+    monkeypatch.setattr(night_schedule, "datetime", FakeDatetime)
+
+    assert night_schedule.current_night_key() == "2026-07-27"
+    assert captured["tz"] == night_schedule._JST
