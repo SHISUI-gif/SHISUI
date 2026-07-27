@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from config.settings import SLEEP_MARKER_FILE
+from config.settings import SLEEP_IN_PROGRESS_FILE, SLEEP_MARKER_FILE
 from src.core import activity_log, night_schedule
 from src.memory.sleep import run_sleep_cycle
 
@@ -38,6 +38,13 @@ def maybe_run_nightly_sleep() -> None:
             f.write(night_key)
     except FileExistsError:
         return  # 別プロセスがこの瞬間に既に確保した
+
+    activity_log.log_activity(
+        kind="sleep",
+        summary="💤 睡眠モード、今夜の学習を開始しました",
+        details={"phase": "start"},
+    )
+    SLEEP_IN_PROGRESS_FILE.write_text(night_key, encoding="utf-8")
 
     try:
         result = run_sleep_cycle()
@@ -70,3 +77,5 @@ def maybe_run_nightly_sleep() -> None:
             )
     except Exception as exc:  # noqa: BLE001
         console.print(f"[yellow]睡眠モードの自動実行に失敗しました(会話は続行します): {exc}[/yellow]")
+    finally:
+        SLEEP_IN_PROGRESS_FILE.unlink(missing_ok=True)

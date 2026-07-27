@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from rich.console import Console
 
-from config.settings import settings
+from config.settings import SLEEP_IN_PROGRESS_FILE, settings
 from src.chat.shisui_chat import generate_proactive_checkin, stream_shisui_events
 from src.core import activity_log, auth, evolution, feedback_autopilot, user_feedback
 from src.corpus.scheduler import maybe_run_nightly_archive_crawl
@@ -211,6 +211,18 @@ def get_activity(authorization: str | None = Header(None)) -> dict:
     """
     _require_user_id(authorization)
     return {"activities": activity_log.get_recent_activity()}
+
+
+@app.get("/api/activity/sleep-status")
+def get_sleep_status(authorization: str | None = Header(None)) -> dict:
+    """睡眠モードが今まさに実行中かどうかを返す(フロントエンドのポーリング用)。
+
+    那由多さんの要望(2026-07-28): 睡眠学習が始まったことがその場で分かる
+    ようにしてほしい、を受けて追加。SLEEP_IN_PROGRESS_FILEの有無で判定する
+    (src/memory/scheduler.pyがrun_sleep_cycle()の前後で作成・削除する)。
+    """
+    _require_user_id(authorization)
+    return {"in_progress": SLEEP_IN_PROGRESS_FILE.exists()}
 
 
 @app.get("/api/evolution/proposals")

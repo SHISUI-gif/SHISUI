@@ -12,3 +12,12 @@ export async function getRecentActivity(token: string): Promise<ActivityEntry[]>
   const body = await response.json()
   return body.activities
 }
+
+export async function getSleepStatus(token: string): Promise<boolean> {
+  const response = await fetch("/api/activity/sleep-status", {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) return false
+  const body = await response.json()
+  return Boolean(body.in_progress)
+}

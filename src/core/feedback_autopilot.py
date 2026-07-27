@@ -12,10 +12,13 @@
 満たした」ことは保証しない——見当違いの実装がそのまま本番に反映される
 リスクは残る。
 
-対象ファイルはPythonバックエンドの一部(テストスイートで検証できる範囲)に
-限定する。フロントエンド(.tsx等)はこのリポジトリのテストゲートで検証
-できないため、対象候補に含めない(全自動化の対象外というより、安全に
-自動検証できる仕組みがまだ無いだけ)。
+2026-07-27、対象候補にフロントエンド(frontend/以下)の一部も追加した
+(那由多さんの明示的な指示: サラさんの「文字が画面外」というUIフィード
+バックを、フロントエンドが対象外だからという理由で見送ったことを受けて)。
+frontend/配下への変更はevolution._verify_for()がtsc型チェックへ自動的に
+ルーティングする(pytestはPythonしか検証できないため)。tscは型・構文
+エラーは検知できるが、CSSの見た目が本当に意図通りかまでは検証できない
+点は依然としてバックエンドと同じ限界がある。
 """
 from __future__ import annotations
 
@@ -31,6 +34,10 @@ _CANDIDATE_FILES = {
     "src/chat/emotion.py": "ユーザーの発言の感情を検知し、返答トーンに反映する仕組み",
     "src/memory/avatar_catalog.py": "会話テーマに応じたアバター(コーデ)解除の判定基準",
     "src/study/study_session.py": "夜間修行(自律学習)で扱うトピックの選び方",
+    "frontend/components/chat/ChatMessage.tsx": "チャット吹き出し(メッセージ1件)の見た目・レイアウト・折り返し",
+    "frontend/components/chat/MarkdownContent.tsx": "メッセージ本文のMarkdown描画(改行・折り返し・コードブロック等)",
+    "frontend/components/chat/ChatMessages.tsx": "チャット全体のスクロール・並び順・メッセージ一覧のレイアウト",
+    "frontend/app/globals.css": "アプリ全体で共有される基本CSS(フォント・色・共通のはみ出し対策等)",
 }
 
 FILE_SELECTION_PROMPT = """\
@@ -56,7 +63,7 @@ FEEDBACK_FIX_PROMPT = """\
 {content}
 
 ## {file_path}の現在の内容
-```python
+```{lang}
 {file_content}
 ```
 
@@ -64,6 +71,8 @@ FEEDBACK_FIX_PROMPT = """\
 説明を1-2文書いた後、```diff で始まるunified diff形式のコードブロックのみを
 出力してください。diffの中のファイルパスは "{file_path}" を使ってください。
 """
+
+_LANG_BY_SUFFIX = {".py": "python", ".tsx": "tsx", ".ts": "typescript", ".css": "css"}
 
 
 def _select_file(content: str) -> str | None:
@@ -75,16 +84,21 @@ def _select_file(content: str) -> str | None:
     return choice if choice in _CANDIDATE_FILES else None
 
 
-def process_feedback(feedback_id: str) -> str:
+def process_feedback(feedback_id: str, *, force: bool = False) -> str:
     """1件のフィードバックについて、対象ファイルの選定→diff生成→テストゲート
     付き自動適用までを行う。戻り値は結果を表す短い文字列
     (SKIPPED/AUTO_APPLY_DISABLED/NO_MATCH/NO_DIFF/APPLIED/TEST_FAILED)。
 
     候補ファイルに当てはまらない・diffが生成できない・テストに落ちた場合は
     人間(那由多さん)のレビュー待ちのまま残す(reviewed=Falseのまま)。
+
+    force=True: 既にreviewed=True(人間が既読/却下済み、または対象拡張前に
+    見送られた)のフィードバックでも、那由多さんの明示的な指示で再実行する
+    場合に使う(2026-07-27、対象候補にフロントエンドを追加した際、それより
+    前にNO_MATCHだった要望を再処理するために追加)。
     """
     feedback = next((f for f in user_feedback.get_all_feedback() if f["id"] == feedback_id), None)
-    if feedback is None or feedback.get("reviewed"):
+    if feedback is None or (feedback.get("reviewed") and not force):
         return "SKIPPED"
     if not settings.evolution_auto_apply:
         return "AUTO_APPLY_DISABLED"
@@ -100,8 +114,9 @@ def process_feedback(feedback_id: str) -> str:
         return "NO_MATCH"
 
     file_content = (BASE_DIR / file_path).read_text(encoding="utf-8")
+    lang = _LANG_BY_SUFFIX.get(next((s for s in _LANG_BY_SUFFIX if file_path.endswith(s)), ""), "")
     prompt = FEEDBACK_FIX_PROMPT.format(
-        content=feedback["content"], file_path=file_path, file_content=file_content
+        content=feedback["content"], file_path=file_path, file_content=file_content, lang=lang
     )
     explanation, diff = evolution._parse_llm_response(evolution._generate_fix_text(prompt))
     if not diff:

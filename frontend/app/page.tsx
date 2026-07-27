@@ -16,7 +16,7 @@ import { StartupLoader } from "@/components/StartupLoader"
 import { LiquidChrome } from "@/components/three/LiquidChrome"
 import { clearAuth, loadAuth, saveAuth, getCurrentUser } from "@/lib/auth"
 import { AuthError, fetchProactiveCheckin, streamChat } from "@/lib/api"
-import { getRecentActivity } from "@/lib/activity"
+import { getRecentActivity, getSleepStatus } from "@/lib/activity"
 import { getAvatarState } from "@/lib/avatar"
 import { getConversationMessages, listConversations } from "@/lib/conversations"
 import { applyProposal, getPendingProposals, rejectProposal } from "@/lib/evolution"
@@ -107,6 +107,9 @@ const PROACTIVE_CHECKIN_IDLE_MS = 1 * 60 * 1000
 // 上記の判定自体は軽い処理だが、setIntervalで秒単位の無駄なre-renderを避けるための巡回間隔。
 // IDLE_MSが短いので、判定の粒度もそれに合わせて詰める
 const PROACTIVE_CHECKIN_POLL_MS = 10 * 1000
+// 睡眠モードが今夜始まったことがその場で分かるように、ヘッダーに軽く表示するための
+// ポーリング間隔。睡眠サイクル自体は数分かかりうる処理なので、秒単位で追う必要は無い。
+const SLEEP_STATUS_POLL_MS = 60 * 1000
 
 export default function Home() {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -121,6 +124,7 @@ export default function Home() {
   const [mood, setMood] = useState<string | null>(null)
   const [activityLogOpen, setActivityLogOpen] = useState(false)
   const [activities, setActivities] = useState<ActivityEntry[]>([])
+  const [sleepInProgress, setSleepInProgress] = useState(false)
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
   const [evolutionOpen, setEvolutionOpen] = useState(false)
   const [proposals, setProposals] = useState<EvolutionProposal[]>([])
@@ -433,6 +437,22 @@ export default function Home() {
     return () => clearInterval(intervalId)
   }, [])
 
+  // 睡眠モードが今夜始まったことがその場で分かるよう、ログイン中は定期的に
+  // 実行中フラグをポーリングし、ヘッダーの表示に反映する。
+  useEffect(() => {
+    const token = user?.token
+    if (!token) return
+
+    const poll = () => {
+      getSleepStatus(token)
+        .then(setSleepInProgress)
+        .catch(() => {})
+    }
+    poll()
+    const intervalId = setInterval(poll, SLEEP_STATUS_POLL_MS)
+    return () => clearInterval(intervalId)
+  }, [user?.token])
+
   if (!authChecked) {
     return <div className="min-h-screen bg-black" />
   }
@@ -628,6 +648,14 @@ export default function Home() {
                       transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
                     >
                       応答中
+                    </motion.span>
+                  ) : sleepInProgress ? (
+                    <motion.span
+                      className="text-[#b8935a]"
+                      animate={{ opacity: [0.4, 1, 0.4] }}
+                      transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                    >
+                      😴 睡眠学習中
                     </motion.span>
                   ) : (
                     `№ ${String(Math.ceil(messages.length / 2)).padStart(2, "0")}`

@@ -163,7 +163,7 @@ def get_proposal(proposal_id: str) -> dict | None:
 
 
 def _run_tests() -> tuple[bool, str]:
-    """テストスイート全件を実行する。auto_apply_fix_proposals()の最後の安全弁。"""
+    """バックエンドのテストスイート全件を実行する。auto_apply_fix_proposals()の最後の安全弁。"""
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/", "-q"],
         cwd=BASE_DIR,
@@ -175,16 +175,42 @@ def _run_tests() -> tuple[bool, str]:
     return result.returncode == 0, output
 
 
+def _run_frontend_typecheck() -> tuple[bool, str]:
+    """フロントエンド(frontend/以下)の型チェック。pytestはPythonしか検証しない
+    ため、frontend/配下のファイルへのパッチにはこちらを安全弁として使う
+    (2026-07-27、フィードバック自動反映の対象をフロントエンドにも広げた際に追加)。
+    tscは型・構文エラーは検知できるが、CSSの見た目が本当に意図通りかまでは
+    検証できない点は依然として同じ限界がある。"""
+    result = subprocess.run(
+        ["npx", "tsc", "--noEmit"],
+        cwd=BASE_DIR / "frontend",
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    output = (result.stdout + result.stderr)[-2000:]
+    return result.returncode == 0, output
+
+
+def _verify_for(file_path: str) -> tuple[bool, str]:
+    """修正対象ファイルの種類に応じて適切な検証コマンドを選ぶ。"""
+    if file_path.startswith("frontend/"):
+        return _run_frontend_typecheck()
+    return _run_tests()
+
+
 def apply_proposal(proposal_id: str, *, run_tests: bool = False) -> tuple[bool, str]:
     """修正案をgit apply経由で実ファイルに適用する。
 
     安全のため:
       - 作業ツリーがクリーンでない場合は適用を拒否する(この修正だけの差分だと保証できないため)
-      - run_tests=Trueの場合、コミット前にテストスイート全件を実行し、1件でも
-        失敗すれば適用前の状態に作業ツリーを戻す(コミットしない)。
-        auto_apply_fix_proposals()(人間承認なしの全自動適用)から呼ばれる際は
+      - run_tests=Trueの場合、コミット前に検証を実行し(_verify_for(): 対象が
+        frontend/配下ならtsc型チェック、それ以外ならバックエンドのテスト
+        スイート全件)、失敗すれば適用前の状態に作業ツリーを戻す(コミット
+        しない)。auto_apply_fix_proposals()(人間承認なしの全自動適用)・
+        feedback_autopilot.py(フィードバックの自動反映)から呼ばれる際は
         常にTrue。`evolution apply`(那由多さんの手動承認)からはFalseのまま
-        (那由多さん自身がテストの要否を判断できるため)
+        (那由多さん自身が検証の要否を判断できるため)
       - 適用に成功したらその場でコミットする(巻き戻しは`git revert`で行える)
     """
     proposal = get_proposal(proposal_id)
@@ -211,7 +237,7 @@ def apply_proposal(proposal_id: str, *, run_tests: bool = False) -> tuple[bool, 
             return False, f"パッチの適用に失敗しました:\n{result.stderr}"
 
         if run_tests:
-            passed, test_output = _run_tests()
+            passed, test_output = _verify_for(proposal["file_path"])
             if not passed:
                 subprocess.run(
                     ["git", "checkout", "--", "."], cwd=BASE_DIR, capture_output=True, text=True

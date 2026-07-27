@@ -372,6 +372,26 @@ def test_activity_returns_recent_log_entries(client):
     assert activities[0]["summary"] == "睡眠モードのテスト実行"
 
 
+def test_sleep_status_requires_auth(client):
+    response = client.get("/api/activity/sleep-status")
+    assert response.status_code == 401
+
+
+def test_sleep_status_reflects_in_progress_marker(client, monkeypatch, tmp_path):
+    marker = tmp_path / "sleep_in_progress.marker"
+    monkeypatch.setattr(main, "SLEEP_IN_PROGRESS_FILE", marker)
+
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+
+    before = client.get("/api/activity/sleep-status", headers={"Authorization": f"Bearer {token}"})
+    assert before.json() == {"in_progress": False}
+
+    marker.write_text("2026-07-28", encoding="utf-8")
+    during = client.get("/api/activity/sleep-status", headers={"Authorization": f"Bearer {token}"})
+    assert during.json() == {"in_progress": True}
+
+
 def test_activity_is_shared_across_users_not_scoped(client):
     """活動ログは特定の友達のものではなく志粋自身の活動なので、誰がログインしても同じ内容が見える。"""
     user1 = client.post("/api/auth/register", json={"name": "ユーザー1", "password": "pw1"}).json()

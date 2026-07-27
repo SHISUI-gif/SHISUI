@@ -19,6 +19,9 @@ MEMORY_DIR = BASE_DIR / "output" / "memory"
 HIPPOCAMPUS_DB_PATH = MEMORY_DIR / "hippocampus.sqlite3"
 NEOCORTEX_DB_DIR = MEMORY_DIR / "neocortex_chroma"
 SLEEP_MARKER_FILE = MEMORY_DIR / "last_sleep_date.txt"
+# 睡眠モードが今まさに実行中かどうかの一時マーカー(存在する間だけ実行中)。
+# フロントエンドがポーリングして「今夜の睡眠学習、実行中...」を表示するために使う。
+SLEEP_IN_PROGRESS_FILE = MEMORY_DIR / "sleep_in_progress.marker"
 CORPUS_DIR = BASE_DIR / "output" / "corpus"
 LITERARY_CHROMA_DIR = CORPUS_DIR / "literary_chroma"
 RAW_CACHE_DIR = CORPUS_DIR / "raw_cache"

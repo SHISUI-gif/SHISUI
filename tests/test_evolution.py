@@ -178,6 +178,42 @@ def test_apply_proposal_reverts_when_tests_fail(isolated_evolution, monkeypatch)
     assert (pending_dir / "abc123.json").exists()
 
 
+def test_apply_proposal_uses_frontend_typecheck_for_frontend_files(isolated_evolution, monkeypatch):
+    """2026-07-27追加: frontend/配下のファイルはpytestでは何も検証できないため、
+    tscの型チェックへルーティングされるべき(サラさんの「文字が画面外」フィード
+    バックをきっかけに、フィードバック自動反映の対象をフロントエンドへ広げた)。"""
+    _, pending_dir = isolated_evolution
+    proposal = evolution.FixProposal(
+        id="abc123",
+        error_id="err1",
+        file_path="frontend/components/chat/ChatMessage.tsx",
+        explanation="説明",
+        diff="diff-content",
+    )
+    evolution._save_proposal(proposal)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd[:2] == ["git", "apply"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["git", "commit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        raise AssertionError(f"想定外のコマンド: {cmd}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(evolution, "_run_frontend_typecheck", lambda: (True, ""))
+
+    def fail_backend_tests():
+        raise AssertionError("frontend/配下のファイルではバックエンドのpytestを呼ぶべきではない")
+
+    monkeypatch.setattr(evolution, "_run_tests", fail_backend_tests)
+
+    ok, _ = evolution.apply_proposal("abc123", run_tests=True)
+
+    assert ok is True
+
+
 def test_apply_proposal_commits_when_tests_pass(isolated_evolution, monkeypatch):
     _, pending_dir = isolated_evolution
     proposal = evolution.FixProposal(
