@@ -464,3 +464,27 @@ def test_generate_proactive_checkin_filters_out_past_empty_entries_from_history(
     shisui_chat.generate_proactive_checkin(user_id=1, conversation_id=conversation_id)
 
     assert all(m.get("content", "").strip() for m in captured["messages"])
+
+
+def test_call_tool_ignoring_unknown_kwargs_drops_args_not_in_signature():
+    """2026-07-27に実際に本番で起きた事故の回帰テスト: LLMがget_weatherに
+    スキーマに無い"time"引数を勝手に付け足し、TypeErrorでツール呼び出し
+    全体が落ちた。シグネチャに無いキーは黙って無視して呼び出すべき。"""
+
+    def fake_get_weather(location: str | None = None) -> str:
+        return f"location={location}"
+
+    result = shisui_chat._call_tool_ignoring_unknown_kwargs(
+        fake_get_weather, {"location": "東京", "time": "night"}
+    )
+
+    assert result == "location=東京"
+
+
+def test_call_tool_ignoring_unknown_kwargs_still_works_with_no_extra_args():
+    def fake_get_weather(location: str | None = None) -> str:
+        return f"location={location}"
+
+    result = shisui_chat._call_tool_ignoring_unknown_kwargs(fake_get_weather, {"location": "大阪"})
+
+    assert result == "location=大阪"

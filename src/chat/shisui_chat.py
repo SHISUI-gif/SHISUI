@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import inspect
 import os
 import re
 import threading
@@ -233,6 +234,18 @@ def _maybe_log_correction_feedback(user_message: str, history: list[dict], user_
         pass
 
 
+def _call_tool_ignoring_unknown_kwargs(tool_fn, arguments: dict) -> str:
+    """LLMがツールスキーマに無い引数を勝手に付け足すことがある(例: get_weatherに
+    スキーマ外の"time"を渡すなど、モデルが指示に無いパラメータを creative に
+    補ってしまうケース)。素直に**argumentsで展開すると即TypeErrorでツール
+    呼び出し全体が失敗するため、対象関数の実際のシグネチャに無いキーは
+    黙って捨てて呼び出す(2026-07-27、本番で実際に起きた事故から追加)。
+    """
+    accepted = set(inspect.signature(tool_fn).parameters)
+    filtered = {k: v for k, v in arguments.items() if k in accepted}
+    return tool_fn(**filtered)
+
+
 def _stream_shisui_events_inner(
     user_message: str, history: list[dict], user_id: int, conversation_id: int
 ) -> Iterator[ChatEvent]:
@@ -313,7 +326,7 @@ def _stream_shisui_events_inner(
             yield ChatEvent(type="tool_status", text=f"🔍 「{query}」について自律検索中...ちょっと待ってね!")
 
             tool_fn = AVAILABLE_TOOLS.get(tool_name)
-            tool_result = tool_fn(**arguments) if tool_fn else f"未知のツール: {tool_name}"
+            tool_result = _call_tool_ignoring_unknown_kwargs(tool_fn, arguments) if tool_fn else f"未知のツール: {tool_name}"
             messages.append({"role": "tool", "content": tool_result, "tool_name": tool_name})
 
     # 2段階目: (検索結果があれば踏まえて)最終回答をストリーミング生成。
