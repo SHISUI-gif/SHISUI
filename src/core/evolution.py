@@ -237,7 +237,16 @@ def apply_proposal(proposal_id: str, *, run_tests: bool = False) -> tuple[bool, 
             return False, f"パッチの適用に失敗しました:\n{result.stderr}"
 
         if run_tests:
-            passed, test_output = _verify_for(proposal["file_path"])
+            try:
+                passed, test_output = _verify_for(proposal["file_path"])
+            except Exception as exc:  # noqa: BLE001
+                # 検証コマンド自体が環境的な理由で失敗すること(例: フロントエンドの
+                # 型チェック用にnpx/Node.jsが入っていないバックエンド専用VM)がある。
+                # ここで例外を握りつぶさずに素通しすると、git applyだけ成功した
+                # 半端な状態(未コミットの変更)が作業ツリーに残ってしまい、次回の
+                # 自動適用が軒並み「作業ツリーが汚れている」で失敗し続ける事故になる。
+                # 検証コマンドが失敗した場合も「テスト失敗」と同じ扱いで必ず戻す。
+                passed, test_output = False, f"検証コマンドの実行自体に失敗しました: {exc}"
             if not passed:
                 subprocess.run(
                     ["git", "checkout", "--", "."], cwd=BASE_DIR, capture_output=True, text=True

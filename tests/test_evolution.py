@@ -178,6 +178,53 @@ def test_apply_proposal_reverts_when_tests_fail(isolated_evolution, monkeypatch)
     assert (pending_dir / "abc123.json").exists()
 
 
+def test_apply_proposal_reverts_when_verification_command_itself_raises(isolated_evolution, monkeypatch):
+    """2026-07-28の回帰テスト: フロントエンド向けの型チェック用にnpx/Node.jsが
+    入っていない環境(バックエンド専用のOracle VM等)では、_verify_for()自体が
+    FileNotFoundErrorを送出しうる。これを素通しすると、git applyだけ成功した
+    未コミットの変更が作業ツリーに残り続け、以降の自動適用が軒並み「作業
+    ツリーが汚れている」で失敗し続ける事故になっていた。例外発生時も
+    テスト失敗と同じくgit checkoutで必ず巻き戻すべき。"""
+    _, pending_dir = isolated_evolution
+    proposal = evolution.FixProposal(
+        id="abc123",
+        error_id="err1",
+        file_path="frontend/components/chat/ChatMessage.tsx",
+        explanation="説明",
+        diff="diff-content",
+    )
+    evolution._save_proposal(proposal)
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:2] == ["git", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd[:2] == ["git", "apply"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["git", "checkout"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd[:2] == ["git", "commit"]:
+            raise AssertionError("検証コマンドが例外を投げた場合はコミットしてはいけない")
+        raise AssertionError(f"想定外のコマンド: {cmd}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    def raise_missing_npx():
+        raise FileNotFoundError("npx が見つかりません")
+
+    monkeypatch.setattr(evolution, "_run_frontend_typecheck", raise_missing_npx)
+
+    ok, message = evolution.apply_proposal("abc123", run_tests=True)
+
+    assert ok is False
+    assert "検証コマンドの実行自体に失敗" in message
+    assert any(cmd[:2] == ["git", "checkout"] for cmd in calls)
+    assert not any(cmd[:2] == ["git", "commit"] for cmd in calls)
+    assert (pending_dir / "abc123.json").exists()
+
+
 def test_apply_proposal_uses_frontend_typecheck_for_frontend_files(isolated_evolution, monkeypatch):
     """2026-07-27追加: frontend/配下のファイルはpytestでは何も検証できないため、
     tscの型チェックへルーティングされるべき(サラさんの「文字が画面外」フィード
