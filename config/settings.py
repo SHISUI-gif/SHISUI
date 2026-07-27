@@ -141,6 +141,11 @@ class Settings:
     groq_coding_model: str = os.getenv("GROQ_CODING_MODEL", "qwen/qwen3.6-27b")
     groq_reasoning_model: str = os.getenv("GROQ_REASONING_MODEL", "qwen/qwen3.6-27b")
     groq_chat_model: str = os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3.6-27b")
+    # 無料枠のTPD(1日あたりトークン数)上限はモデルごとに独立したプールなので、
+    # qwen3.6-27b(thinkingモデルで生成量が多く枯渇しやすい)が429になった時だけ、
+    # 別プールの非thinkingモデルへ1回だけフォールバックする(2026-07-27、
+    # 本番で実際に200000 TPDを使い切って発生した障害への対処)。
+    groq_fallback_chat_model: str = os.getenv("GROQ_FALLBACK_CHAT_MODEL", "llama-3.3-70b-versatile")
 
     # OpenRouter(無料枠、コーディング質問だけ限定で使う)。
     # OpenRouterの無料枠(:freeモデル)は1日50〜1000リクエストとGroqよりかなり

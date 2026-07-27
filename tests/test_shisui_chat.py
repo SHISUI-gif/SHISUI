@@ -517,3 +517,34 @@ def test_stream_shisui_events_falls_back_when_groq_tool_detection_rejects_call(m
     assert results[-1] == "天気ツールは使えなかったけど元気だよ!"
     logged = error_log.get_unreviewed_errors()
     assert any(e["source"] == "tool_detection" for e in logged)
+
+
+def test_stream_shisui_reply_falls_back_to_secondary_groq_model_on_rate_limit(monkeypatch):
+    """2026-07-27に本番で実際に発生: Groq無料枠のTPD(1日あたりトークン)上限に
+    達すると429が返り、会話が完全に止まってしまっていた。モデルごとに独立した
+    プールなので、フォールバックモデルへ1回だけ切り替えて継続すべき。"""
+    monkeypatch.setattr(
+        shisui_chat,
+        "settings",
+        dataclasses.replace(
+            shisui_chat.settings, use_groq=True, groq_fallback_chat_model="llama-3.3-70b-versatile"
+        ),
+    )
+
+    fake_response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/x"))
+    calls = []
+
+    def fake_groq_chat(model, messages, tools=None, stream=False):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+        calls.append(model)
+        if model != "llama-3.3-70b-versatile":
+            raise groq.RateLimitError("rate_limit_exceeded", response=fake_response, body=None)
+        return iter([{"message": {"content": "フォールバックで応答するね"}}])
+
+    monkeypatch.setattr(shisui_chat.groq_client, "chat", fake_groq_chat)
+
+    results = list(shisui_chat.stream_shisui_reply("テスト", []))
+
+    assert results[-1] == "フォールバックで応答するね"
+    assert calls[-1] == "llama-3.3-70b-versatile"

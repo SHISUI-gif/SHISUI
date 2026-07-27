@@ -167,7 +167,17 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
         return
 
     if settings.use_groq:
-        yield from groq_client.chat(model=model, messages=messages, stream=True)
+        try:
+            yield from groq_client.chat(model=model, messages=messages, stream=True)
+        except groq.RateLimitError:
+            # Groq無料枠のTPD(1日あたりトークン数)上限はモデルごとに独立した
+            # プールのため、qwen3.6-27b(thinkingモデルで消費が激しい)が枯渇
+            # しても、別モデルのプールはまだ余裕があることが多い。1回だけ
+            # フォールバックして会話を継続させる(2026-07-27、本番で実際に
+            # 200000 TPDを使い切って起きた障害への対処)。
+            yield from groq_client.chat(
+                model=settings.groq_fallback_chat_model, messages=messages, stream=True
+            )
         return
 
     # 常時使う軽量な分類モデル(_stream_shisui_events_inner内の並列呼び出し)は
