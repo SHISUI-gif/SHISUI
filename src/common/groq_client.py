@@ -47,6 +47,49 @@ def _tool_calls_to_ollama_shape(tool_calls) -> list[dict] | None:
     ]
 
 
+def _messages_to_groq_shape(messages: list[dict]) -> list[dict]:
+    """呼び出し側(shisui_chat.py)はOllama形式の会話履歴をそのまま積み上げて
+    再送してくる: tool_callsのargumentsは既にパース済みの辞書、"id"は無く、
+    tool結果メッセージは"tool_name"だけを持ち"tool_call_id"を持たない。
+    GroqはOpenAI互換APIのため、tool_callsに"id"/"type":"function"を要求し、
+    argumentsはJSON文字列でなければならず、tool結果メッセージは対応する
+    "tool_call_id"を要求する。ここで変換する(実際にツール呼び出しを含む
+    会話をGroq経由で送るまで気づかれなかったバグ)。
+    """
+    converted: list[dict] = []
+    pending_tool_call_ids: list[str] = []
+    for message in messages:
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            pending_tool_call_ids = []
+            new_calls = []
+            for i, call in enumerate(message["tool_calls"]):
+                call_id = f"call_{len(converted)}_{i}"
+                pending_tool_call_ids.append(call_id)
+                new_calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": call["function"]["name"],
+                            "arguments": json.dumps(call["function"]["arguments"]),
+                        },
+                    }
+                )
+            converted.append({**message, "tool_calls": new_calls})
+        elif message.get("role") == "tool" and "tool_call_id" not in message:
+            call_id = pending_tool_call_ids.pop(0) if pending_tool_call_ids else f"call_unknown_{len(converted)}"
+            new_message = {k: v for k, v in message.items() if k != "tool_name"}
+            new_message["tool_call_id"] = call_id
+            converted.append(new_message)
+        elif message.get("role") == "assistant" and "tool_calls" in message:
+            # tool_calls=Noneの平常時のアシスタント発言。Groqにnullキーを
+            # 送らないよう取り除く(必須ではないが素直にしておく)。
+            converted.append({k: v for k, v in message.items() if k != "tool_calls"})
+        else:
+            converted.append(message)
+    return converted
+
+
 def _stream_chunks(response) -> Iterator[dict]:
     for chunk in response:
         delta = chunk.choices[0].delta
@@ -69,7 +112,7 @@ def chat(
     client = _get_client()
     response = client.chat.completions.create(
         model=model,
-        messages=messages,
+        messages=_messages_to_groq_shape(messages),
         tools=tools,
         stream=stream,
     )
