@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 
+import groq
 import ollama
 from rich.console import Console
 
@@ -308,14 +309,23 @@ def _stream_shisui_events_inner(
     # messagesの構築(=記憶検索の結果)に依存するため、上の並列バッチには含められない。
     tool_client = groq_client if settings.use_groq else ollama
     tool_model = settings.groq_classifier_model if settings.use_groq else settings.router_classifier_model
-    first_response = tool_client.chat(
-        model=tool_model,
-        messages=messages,
-        tools=ALL_TOOL_SCHEMAS,
-    )
-
-    assistant_message = first_response["message"]
-    tool_calls = assistant_message["tool_calls"] if "tool_calls" in assistant_message else None
+    try:
+        first_response = tool_client.chat(
+            model=tool_model,
+            messages=messages,
+            tools=ALL_TOOL_SCHEMAS,
+        )
+        assistant_message = first_response["message"]
+        tool_calls = assistant_message["tool_calls"] if "tool_calls" in assistant_message else None
+    except groq.BadRequestError as exc:
+        # Groqの一部軽量モデル(llama-3.1-8b-instant等)は、構造化ツール呼び出し
+        # ではなく独自の関数呼び出し記法("<function=...>")を出力してしまうことが
+        # あり、Groq側がそれをtool_use_failedとして即400で拒否してくる(2026-07-27、
+        # 本番で実際に発生)。ツール検知1回の失敗で会話全体を落とすのではなく、
+        # 今回はツール無しとして扱い、通常の応答生成へフォールバックする。
+        error_log.log_error(source="tool_detection", exc=exc)
+        assistant_message = {"role": "assistant", "content": "", "tool_calls": None}
+        tool_calls = None
 
     if tool_calls:
         messages.append(assistant_message)

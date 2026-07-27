@@ -17,6 +17,8 @@ stream_shisui_reply()はuser_id/conversation_idを省略するとデフォルト
 import dataclasses
 import hashlib
 
+import groq
+import httpx
 import ollama
 import pytest
 
@@ -488,3 +490,30 @@ def test_call_tool_ignoring_unknown_kwargs_still_works_with_no_extra_args():
     result = shisui_chat._call_tool_ignoring_unknown_kwargs(fake_get_weather, {"location": "大阪"})
 
     assert result == "location=大阪"
+
+
+def test_stream_shisui_events_falls_back_when_groq_tool_detection_rejects_call(monkeypatch, tmp_path):
+    """2026-07-27に本番で実際に発生: Groqの軽量モデル(llama-3.1-8b-instant)が
+    構造化ツール呼び出しの代わりに独自記法("<function=...>")を出力し、Groqが
+    tool_use_failedとして400を返すことがある。ツール検知1回の失敗で会話全体を
+    落とすのではなく、その回はツール無しとして通常応答へフォールバックすべき。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+    monkeypatch.setattr(
+        shisui_chat, "settings", dataclasses.replace(shisui_chat.settings, use_groq=True)
+    )
+
+    fake_response = httpx.Response(400, request=httpx.Request("POST", "https://api.groq.com/x"))
+
+    def fake_groq_chat(model, messages, tools=None, stream=False):
+        if tools:
+            raise groq.BadRequestError("tool_use_failed", response=fake_response, body=None)
+        assert stream is True
+        return iter([{"message": {"content": "天気ツールは使えなかったけど元気だよ!"}}])
+
+    monkeypatch.setattr(shisui_chat.groq_client, "chat", fake_groq_chat)
+
+    results = list(shisui_chat.stream_shisui_reply("今日の天気は?", []))
+
+    assert results[-1] == "天気ツールは使えなかったけど元気だよ!"
+    logged = error_log.get_unreviewed_errors()
+    assert any(e["source"] == "tool_detection" for e in logged)
