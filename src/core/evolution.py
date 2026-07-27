@@ -1,21 +1,25 @@
 """志粋の「進化プロトコル」(自己修復)。
 
 エラーログ(src/core/error_log.py)の未レビュー分を読み、コーディング特化の
-ローカルモデルにトレースバックと該当ファイルを読ませて、統一diff形式の
-修正案を生成する。
+モデル(ローカルまたはGroq、use_groq設定に従う)にトレースバックと該当
+ファイルを読ませて、統一diff形式の修正案を生成する。
 
-那由多さんと合意した方針:
+那由多さんと合意した方針(2026-07-27改定):
   - shutil.copyによる手動バックアップではなく、gitのブランチ/コミットで変更を管理する
-  - 生成された修正案はoutput/evolution/pending/に保存されるだけで、実際の
-    ソースファイルには一切書き込まない
-  - 適用は那由多さんが`python app.py evolution apply <id>`で明示的に
-    承認した時だけ行う(全自動の自己書き換えにはしない)
+  - 生成された修正案はoutput/evolution/pending/に保存される
+  - `EVOLUTION_AUTO_APPLY=true`(既定)の場合、テストが全件通った修正案のみ
+    人間の承認なしで自動適用・自動コミットする(那由多さんの明示的な同意による、
+    2026-07-27以前は人間承認が必須だった)。テストが1件でも失敗すれば
+    作業ツリーを破棄し、その修正案は適用されない。falseにすれば、
+    那由多さんが`python app.py evolution apply <id>`で明示的に承認する
+    従来モードに戻せる
 """
 from __future__ import annotations
 
 import json
 import re
 import subprocess
+import sys
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -23,7 +27,8 @@ from pathlib import Path
 import ollama
 
 from config.settings import BASE_DIR, PENDING_PATCHES_DIR, settings
-from src.core import error_log
+from src.common import groq_client
+from src.core import activity_log, error_log
 
 FIX_PROMPT_TEMPLATE = """\
 以下はPythonアプリケーションで実際に発生したエラーのトレースバックです。
@@ -84,6 +89,20 @@ def _save_proposal(proposal: FixProposal) -> None:
     path.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _generate_fix_text(prompt: str) -> str:
+    """修正案の生成呼び出し。use_groq時はローカルにevolution_fix_modelが無い
+    環境(例: 埋め込み専用OllamaしかないOracle VM)でも動くようGroqを使う。"""
+    if settings.use_groq:
+        response = groq_client.chat(
+            model=settings.groq_coding_model, messages=[{"role": "user", "content": prompt}]
+        )
+    else:
+        response = ollama.chat(
+            model=settings.evolution_fix_model, messages=[{"role": "user", "content": prompt}]
+        )
+    return response["message"]["content"]
+
+
 def generate_fix_proposals() -> list[FixProposal]:
     """未レビューのエラーそれぞれについて、修正案を生成しpendingとして保存する。
 
@@ -109,11 +128,7 @@ def generate_fix_proposals() -> list[FixProposal]:
             file_content=file_path.read_text(encoding="utf-8"),
         )
 
-        response = ollama.chat(
-            model=settings.evolution_fix_model,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        explanation, diff = _parse_llm_response(response["message"]["content"])
+        explanation, diff = _parse_llm_response(_generate_fix_text(prompt))
 
         error_log.mark_reviewed(error["id"])
         if not diff:
@@ -147,11 +162,29 @@ def get_proposal(proposal_id: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def apply_proposal(proposal_id: str) -> tuple[bool, str]:
-    """修正案をgit apply経由で実ファイルに適用する。那由多さんの明示的な承認を経て呼ばれる想定。
+def _run_tests() -> tuple[bool, str]:
+    """テストスイート全件を実行する。auto_apply_fix_proposals()の最後の安全弁。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/", "-q"],
+        cwd=BASE_DIR,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    output = (result.stdout + result.stderr)[-2000:]
+    return result.returncode == 0, output
+
+
+def apply_proposal(proposal_id: str, *, run_tests: bool = False) -> tuple[bool, str]:
+    """修正案をgit apply経由で実ファイルに適用する。
 
     安全のため:
       - 作業ツリーがクリーンでない場合は適用を拒否する(この修正だけの差分だと保証できないため)
+      - run_tests=Trueの場合、コミット前にテストスイート全件を実行し、1件でも
+        失敗すれば適用前の状態に作業ツリーを戻す(コミットしない)。
+        auto_apply_fix_proposals()(人間承認なしの全自動適用)から呼ばれる際は
+        常にTrue。`evolution apply`(那由多さんの手動承認)からはFalseのまま
+        (那由多さん自身がテストの要否を判断できるため)
       - 適用に成功したらその場でコミットする(巻き戻しは`git revert`で行える)
     """
     proposal = get_proposal(proposal_id)
@@ -177,6 +210,14 @@ def apply_proposal(proposal_id: str) -> tuple[bool, str]:
         if result.returncode != 0:
             return False, f"パッチの適用に失敗しました:\n{result.stderr}"
 
+        if run_tests:
+            passed, test_output = _run_tests()
+            if not passed:
+                subprocess.run(
+                    ["git", "checkout", "--", "."], cwd=BASE_DIR, capture_output=True, text=True
+                )
+                return False, f"テストが失敗したため適用を取り消しました:\n{test_output}"
+
         subprocess.run(
             [
                 "git", "commit", "-am",
@@ -192,6 +233,38 @@ def apply_proposal(proposal_id: str) -> tuple[bool, str]:
     (PENDING_PATCHES_DIR / f"{proposal_id}.json").unlink(missing_ok=True)
 
     return True, f"{proposal['file_path']}に適用し、コミットしました。問題があれば`git revert`で戻せます。"
+
+
+def auto_apply_fix_proposals() -> list[tuple[FixProposal, bool, str]]:
+    """新規に生成された修正案を、テストが全件通ることを条件に人間の承認なしで
+    自動適用する(settings.evolution_auto_apply、既定true)。
+
+    結果(適用できたか・できなかったか、どちらも)を`activity_log`に記録し、
+    那由多さんがActivityLog UIで後から確認できるようにする——完全自動化の
+    引き換えに那由多さんが明示的に求めた可視性。
+    """
+    if not settings.evolution_auto_apply:
+        return []
+
+    results: list[tuple[FixProposal, bool, str]] = []
+    for proposal in generate_fix_proposals():
+        success, message = apply_proposal(proposal.id, run_tests=True)
+        results.append((proposal, success, message))
+        activity_log.log_activity(
+            kind="self_repair",
+            summary=(
+                f"✅ {proposal.file_path}を自動修正しました" if success
+                else f"⚠️ {proposal.file_path}の修正案はテストに通らず破棄しました"
+            ),
+            details={
+                "proposal_id": proposal.id,
+                "file_path": proposal.file_path,
+                "explanation": proposal.explanation,
+                "applied": success,
+                "message": message,
+            },
+        )
+    return results
 
 
 def reject_proposal(proposal_id: str) -> bool:

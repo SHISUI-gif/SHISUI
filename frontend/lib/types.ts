@@ -43,7 +43,7 @@ export interface AvatarState {
 
 export interface ActivityEntry {
   timestamp: string;
-  kind: "sleep" | "study" | "debate";
+  kind: "sleep" | "study" | "debate" | "self_repair";
   summary: string;
   details: Record<string, unknown>;
 }

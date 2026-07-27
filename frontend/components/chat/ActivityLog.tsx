@@ -37,6 +37,7 @@ const KIND_LABEL: Record<ActivityEntry["kind"], string> = {
   sleep: "💤 睡眠モード",
   study: "📚 夜間修行",
   debate: "💬 自律討論",
+  self_repair: "🔧 自己修復",
 }
 
 /**
@@ -188,6 +189,10 @@ export function ActivityLog({ isOpen, onClose, activities }: ActivityLogProps) {
                       <div className="flex items-center justify-between font-mono text-xs">
                         <span className="text-white/40">自律討論</span>
                         <span className="text-white/70">{counts.debate ?? 0}件</span>
+                      </div>
+                      <div className="flex items-center justify-between font-mono text-xs">
+                        <span className="text-white/40">自己修復</span>
+                        <span className="text-white/70">{counts.self_repair ?? 0}件</span>
                       </div>
                     </div>
                   </div>

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import os
 import re
 import threading
 from collections.abc import Iterator
@@ -91,22 +92,35 @@ def stream_shisui_events(
 
 
 def _trigger_background_evolution_scan() -> None:
-    """エラー発生直後に、修正案生成(自己修復プロトコル)を自主的にバックグラウンドで
-    走らせる。以前は`python app.py evolution scan`を手動実行するまで修正案が
-    生成されず、夜間サイクルを待たないと気づけなかった。生成にはLLM呼び出しが
+    """エラー発生直後に、修正案生成→(evolution_auto_apply設定に従い)自動適用を
+    自主的にバックグラウンドで走らせる。生成・適用ともにLLM呼び出しやテスト実行を
     伴うため、今エラーになった会話のストリームは決してブロックしない
     (別スレッドで実行し、失敗しても会話には一切影響しない)。
-    生成した修正案自体は今まで通りpending/に保存されるだけで、適用は
-    那由多さんの明示的な承認が必要(evolution.pyの既存の安全境界は変更しない)。
+
+    2026-07-27、那由多さんの明示的な同意によりevolution.auto_apply_fix_proposals()
+    (テスト全件通過を条件にした無承認の自動適用)を呼ぶよう変更。systemd管理下
+    (INVOCATION_ID環境変数の有無で判定)で1件でも適用できた場合は、変更を実際の
+    挙動に反映させるためプロセスを終了し、systemdのRestart=alwaysに再起動させる
+    (ローカルMacでの手動実行時は再起動せず、次回起動時に反映される)。
     """
 
     def _run() -> None:
         try:
-            proposals = evolution.generate_fix_proposals()
-            if proposals:
+            results = evolution.auto_apply_fix_proposals()
+            applied = [proposal for proposal, success, _ in results if success]
+            if applied:
                 console.print(
-                    f"[dim]🔧 自己修復: エラーから修正案{len(proposals)}件を自動生成しました[/dim]"
+                    f"[dim]🔧 自己修復: {len(applied)}件を自動適用しました"
+                    f"({', '.join(p.file_path for p in applied)})[/dim]"
                 )
+                if os.environ.get("INVOCATION_ID"):
+                    console.print("[dim]🔄 変更を反映するため再起動します(systemdが自動で立ち上げ直します)[/dim]")
+                    os._exit(0)
+            for proposal, success, message in results:
+                if not success:
+                    console.print(
+                        f"[yellow]自己修復: {proposal.file_path}の修正案は適用されませんでした: {message}[/yellow]"
+                    )
         except Exception as exc:  # noqa: BLE001
             console.print(f"[yellow]自己修復の自動実行に失敗しました(会話は続行します): {exc}[/yellow]")
 

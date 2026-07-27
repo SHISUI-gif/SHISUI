@@ -115,10 +115,16 @@ class Settings:
     # 分類モデルはROUTER_CLASSIFIER_MODEL(またはGroq利用時はGROQ_CLASSIFIER_MODEL)を共用する。
     emotion_detection_enabled: bool = os.getenv("EMOTION_DETECTION_ENABLED", "true").lower() == "true"
 
-    # 自己修復プロトコル(エラー検知→修正案生成→人間承認)。
-    # コーディング特化のローカルモデルを使い、外部API(Gemini)には出さない。
+    # 自己修復プロトコル(エラー検知→修正案生成)。
+    # コーディング特化のモデルを使う。use_groq時はローカルの重いコーディングモデルの
+    # 代わりにgroq_coding_modelを使う(VM等、ローカルにqwen3-coder:30bが無い環境向け)。
     evolution_enabled: bool = os.getenv("EVOLUTION_ENABLED", "true").lower() == "true"
     evolution_fix_model: str = os.getenv("EVOLUTION_FIX_MODEL", "qwen3-coder:30b")
+    # 2026-07-27、那由多さんの明示的な同意により全自動適用に変更(それまでは
+    # 修正案の生成だけ自動・適用は`evolution apply`での人間承認が必須だった)。
+    # 生成されたパッチはテストが全件通った場合のみコミットされ、失敗時は
+    # 作業ツリーを破棄して何も適用しない。falseにすれば元の「提案のみ」に戻せる。
+    evolution_auto_apply: bool = os.getenv("EVOLUTION_AUTO_APPLY", "true").lower() == "true"
 
     # クラウド移行(Macの蓋を閉じても志粋が動き続けられるようにする選択肢)。
     # trueにすると、chatの呼び出し(生成・モデル振り分け・ツール判定)をローカル
