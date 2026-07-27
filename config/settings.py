@@ -72,7 +72,9 @@ class Settings:
     memory_similarity_threshold: float = float(os.getenv("MEMORY_SIMILARITY_THRESHOLD", "0.85"))
     # アバター解除判定の対象期間。「その日話した内容だけ」だと話題が1日に
     # 集中しなかった場合に永久にチャンスを逃すため、複数日分の会話を毎回まとめて見る。
-    avatar_unlock_lookback_days: int = int(os.getenv("AVATAR_UNLOCK_LOOKBACK_DAYS", "3"))
+    # 2026-07-28、那由多さんの「感度を上げたい」という要望を受けて3日→7日に拡大
+    # (見る範囲を広げるほど、テーマに触れるチャンスも増える)。
+    avatar_unlock_lookback_days: int = int(os.getenv("AVATAR_UNLOCK_LOOKBACK_DAYS", "7"))
 
     # 文学的感性コーパス(Aozora Bunko)
     literary_hint_top_k: int = int(os.getenv("LITERARY_HINT_TOP_K", "2"))
