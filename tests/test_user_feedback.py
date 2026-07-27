@@ -47,3 +47,15 @@ def test_mark_reviewed_updates_only_matching_record(monkeypatch, tmp_path):
     all_feedback = {r["id"]: r for r in user_feedback.get_all_feedback()}
     assert all_feedback[first["id"]]["reviewed"] is True
     assert all_feedback[second["id"]]["reviewed"] is False
+
+
+def test_mark_applied_sets_reviewed_and_records_proposal_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(user_feedback, "USER_FEEDBACK_FILE", tmp_path / "user_feedback.json")
+
+    record = user_feedback.submit_feedback(1, "那由多", "もっとフランクに話して")
+
+    user_feedback.mark_applied(record["id"], "abc123")
+
+    saved = {r["id"]: r for r in user_feedback.get_all_feedback()}[record["id"]]
+    assert saved["reviewed"] is True
+    assert saved["applied_proposal_id"] == "abc123"

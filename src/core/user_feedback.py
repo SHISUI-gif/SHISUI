@@ -53,3 +53,15 @@ def mark_reviewed(feedback_id: str) -> None:
         if record["id"] == feedback_id:
             record["reviewed"] = True
     _save_all(records)
+
+
+def mark_applied(feedback_id: str, proposal_id: str) -> None:
+    """feedback_autopilot.process_feedback()がテストゲート付きで自動適用に
+    成功した際に呼ぶ。reviewedも同時に立て、那由多さんが個別に既読操作
+    しなくてもレビュー待ち一覧から自然に消えるようにする。"""
+    records = _load_all()
+    for record in records:
+        if record["id"] == feedback_id:
+            record["reviewed"] = True
+            record["applied_proposal_id"] = proposal_id
+    _save_all(records)

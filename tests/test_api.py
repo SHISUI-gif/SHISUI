@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from src.api import main
 from src.chat import shisui_chat
-from src.core import activity_log, auth, evolution, user_feedback
+from src.core import activity_log, auth, evolution, feedback_autopilot, user_feedback
 from src.corpus import ingest as literary_ingest
 from src.memory import avatar, conversations, hippocampus, neocortex
 
@@ -45,6 +45,10 @@ def _isolate_storage(tmp_path, monkeypatch):
     (tmp_path / "pending").mkdir()
     monkeypatch.setattr(user_feedback, "USER_FEEDBACK_FILE", tmp_path / "user_feedback.json")
     monkeypatch.setattr(ollama, "embeddings", _fake_embeddings)
+    # /api/feedbackはfeedback_autopilot.process_feedback()を別スレッドで自動発火する
+    # (2026-07-27追加)。real LLM呼び出し・実物のgitコマンドに触れさせないよう、
+    # 既定ではno-opにしておく(個々のテストが上書きすれば実際に呼ばれたことも検証できる)。
+    monkeypatch.setattr(feedback_autopilot, "process_feedback", lambda feedback_id: "SKIPPED")
     # このマシンの実際の.env(USE_GROQ)に関わらず決定的に振る舞わせる
     # (2026-07-27、Oracle VMのUSE_GROQ=trueで実物のGroq APIを叩いてしまい発覚)。
     monkeypatch.setattr(shisui_chat, "settings", dataclasses.replace(shisui_chat.settings, use_groq=False))
@@ -430,6 +434,36 @@ def test_feedback_submit_records_submitter_from_token_not_body(client):
     assert len(stored) == 1
     assert stored[0]["user_name"] == "友達"
     assert stored[0]["content"] == "PDFも読めたら嬉しい"
+
+
+def test_feedback_submit_triggers_autopilot_in_background(client, monkeypatch):
+    """2026-07-27追加: 送信されたフィードバックは、feedback_autopilot経由で
+    自動実装が試みられる(那由多さんの明示的な同意による)。スレッドの完了を
+    確定的に待つため、threading.Threadを同期実行の偽物に差し替える。"""
+    calls = []
+    monkeypatch.setattr(feedback_autopilot, "process_feedback", lambda feedback_id: calls.append(feedback_id))
+
+    class SyncThread:
+        def __init__(self, target, args=(), daemon=None):
+            self._target = target
+            self._args = args
+
+        def start(self):
+            self._target(*self._args)
+
+    monkeypatch.setattr(main.threading, "Thread", SyncThread)
+
+    register = client.post("/api/auth/register", json={"name": "友達", "password": "pw"})
+    token = register.json()["token"]
+
+    response = client.post(
+        "/api/feedback",
+        json={"content": "もっとフランクに話して"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    feedback_id = response.json()["id"]
+    assert calls == [feedback_id]
 
 
 def test_feedback_submit_rejects_empty_content(client):

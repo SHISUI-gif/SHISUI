@@ -201,6 +201,11 @@ export function FeedbackReview({ isOpen, onClose, entries, onDismiss }: Feedback
                       </p>
                       <p className="mt-1 text-sm text-white/80">{entry.content}</p>
                       <p className="mt-1 font-mono text-[10px] text-white/25">{entry.timestamp}</p>
+                      {entry.applied_proposal_id && (
+                        <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-emerald-400/80">
+                          🔧 自動反映済み(詳細はアクティビティログ参照)
+                        </p>
+                      )}
                       {!entry.reviewed && (
                         <button
                           type="button"

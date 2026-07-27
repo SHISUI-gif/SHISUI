@@ -69,4 +69,5 @@ export interface UserFeedbackEntry {
   user_name: string;
   content: string;
   reviewed: boolean;
+  applied_proposal_id?: string;
 }

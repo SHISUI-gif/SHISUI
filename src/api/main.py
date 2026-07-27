@@ -19,7 +19,7 @@ from rich.console import Console
 
 from config.settings import settings
 from src.chat.shisui_chat import generate_proactive_checkin, stream_shisui_events
-from src.core import activity_log, auth, evolution, user_feedback
+from src.core import activity_log, auth, evolution, feedback_autopilot, user_feedback
 from src.corpus.scheduler import maybe_run_nightly_archive_crawl
 from src.debate.scheduler import maybe_run_nightly_debate_autonomous
 from src.memory import avatar, conversations, hippocampus
@@ -260,7 +260,16 @@ def submit_user_feedback(
     """
     user_id = _require_user_id(authorization)
     user_name = auth.get_user_name(user_id) or ""
-    return user_feedback.submit_feedback(user_id, user_name, request.content)
+    record = user_feedback.submit_feedback(user_id, user_name, request.content)
+
+    # 2026-07-27、那由多さんの明示的な同意により、要望・フィードバックの実装を
+    # 自動で試みる(feedback_autopilot.py参照)。送信リクエスト自体は待たせない
+    # よう別スレッドで実行する(diff生成・テスト実行にLLM呼び出し+数秒かかるため)。
+    threading.Thread(
+        target=feedback_autopilot.process_feedback, args=(record["id"],), daemon=True
+    ).start()
+
+    return record
 
 
 @app.get("/api/feedback")
