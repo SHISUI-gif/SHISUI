@@ -44,6 +44,11 @@ def _run_oci(args: list[str]) -> dict:
         print(f"oci CLI実行に失敗しました: {' '.join(args)}", file=sys.stderr)
         print(result.stderr, file=sys.stderr)
         sys.exit(1)
+    if not result.stdout.strip():
+        # このoci CLIには、結果が空リストの時にreturncode=0のままstdoutに
+        # 何も出力しないクセがある(--debugで見るとAPI自体は200 "data": []を
+        # 返している)。空文字列を「空リスト」として扱う。
+        return {"data": []}
     return json.loads(result.stdout)
 
 
