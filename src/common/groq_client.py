@@ -192,6 +192,11 @@ def chat(
         messages=_messages_to_groq_shape(messages),
         tools=tools,
         stream=stream,
+        # 省略時のGroq側デフォルト値に依存すると、長めの応答が途中で打ち切られる
+        # ことがあった(2026-07-28、「回答が途中で途切れる」というフィードバックを
+        # 受けて調査・対処)。qwen3.6-27b/llama-3.3-70b-versatileとも十分収まる
+        # 余裕を持った値を明示する。
+        max_completion_tokens=8192,
     )
 
     if stream:

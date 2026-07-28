@@ -23,8 +23,10 @@ class _FakeChatCompletions:
     def __init__(self, response=None, stream_chunks=None):
         self._response = response
         self._stream_chunks = stream_chunks or []
+        self.last_kwargs = None
 
     def create(self, **kwargs):
+        self.last_kwargs = kwargs
         if kwargs.get("stream"):
             return iter(self._stream_chunks)
         return self._response
@@ -137,6 +139,21 @@ def test_chat_streaming_splits_think_tags_across_chunk_boundaries(monkeypatch):
     assert thinking_text == "考え中..."
     assert content_text == "結論はこうだよ"
     assert "<think>" not in content_text and "</think>" not in content_text
+
+
+def test_chat_sets_a_generous_max_completion_tokens(monkeypatch):
+    """2026-07-28の回帰テスト: max_completion_tokensを省略するとGroq側の
+    デフォルト値に依存してしまい、「回答が途中で途切れる」という実際の
+    フィードバックにつながった。明示的に十分な上限を渡すべき。"""
+    fake_response = types.SimpleNamespace(
+        choices=[types.SimpleNamespace(message=_fake_message(content="こんにちは"))]
+    )
+    completions = _FakeChatCompletions(response=fake_response)
+    monkeypatch.setattr(groq_client, "_get_client", lambda: _FakeClient(completions))
+
+    groq_client.chat(model="qwen/qwen3.6-27b", messages=[{"role": "user", "content": "hi"}])
+
+    assert completions.last_kwargs["max_completion_tokens"] == 8192
 
 
 def test_embeddings_returns_ollama_shaped_response(monkeypatch):
