@@ -598,6 +598,7 @@ export default function Home() {
               sessionCount={conversationList.length}
               unlockCount={avatarItems.length}
               mood={mood}
+              unlockedItems={avatarItems}
               conversations={conversationList}
               activeConversationId={conversationId}
               onSelectConversation={handleSelectConversation}

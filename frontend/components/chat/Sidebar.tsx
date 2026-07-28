@@ -1,10 +1,11 @@
 "use client"
 
 import { AnimatePresence, motion } from "framer-motion"
+import { AvatarDisplay } from "@/components/AvatarDisplay"
 import { GlowBlob } from "@/components/GlowBlob"
 import { cn } from "@/lib/utils"
 import { DURATION, EASE } from "@/lib/motion"
-import type { Conversation } from "@/lib/types"
+import type { AvatarItem, Conversation } from "@/lib/types"
 
 /**
  * 会話一覧の各行をドロワー本体のスライドが落ち着いた後に少し遅れて
@@ -35,6 +36,7 @@ interface SidebarProps {
   sessionCount: number
   unlockCount: number
   mood: string | null
+  unlockedItems: AvatarItem[]
   conversations: Conversation[]
   activeConversationId: number | null
   onSelectConversation: (id: number) => void
@@ -65,6 +67,7 @@ export function Sidebar({
   sessionCount,
   unlockCount,
   mood,
+  unlockedItems,
   conversations,
   activeConversationId,
   onSelectConversation,
@@ -112,6 +115,22 @@ export function Sidebar({
               >
                 + 新しい会話
               </button>
+
+              {/* ホーム画面(chatOpen=false)を閉じるとAvatarDisplay自体が
+                  アンマウントされ、会話中は自分のアバターが一切見えなくなって
+                  いた(那由多さんの指摘「新しく会話を開かないと自分のアバター
+                  を見れない」)。チャット中でも常に開けるサイドバーに、小さな
+                  縮小表示を常設する。 */}
+              <div className="mt-3 flex items-center gap-3 border-t border-white/10 pt-3">
+                <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-white/10 bg-white/5">
+                  <AvatarDisplay unlockedItems={unlockedItems} mood={mood} />
+                </div>
+                <p className="min-w-0 truncate font-mono text-[10px] text-white/40">
+                  {unlockedItems.length > 0
+                    ? unlockedItems[unlockedItems.length - 1].display_name
+                    : "素体"}
+                </p>
+              </div>
 
               {/* ホーム画面から移した統計(会話数・解除数・ムード)。
                   ホームは「情報より志粋の存在感」を優先する1枚絵にしたため、
