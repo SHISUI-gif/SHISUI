@@ -213,7 +213,29 @@ def get_avatar(authorization: str | None = Header(None)) -> dict:
         if slug in catalog_by_slug
     ]
     mood = hippocampus.get_recent_mood(user_id)
-    return {"unlocked_items": unlocked_items, "mood": mood}
+    return {
+        "unlocked_items": unlocked_items,
+        "mood": mood,
+        "selected_slug": avatar.get_selected_slug(user_id),
+    }
+
+
+class SelectAvatarRequest(BaseModel):
+    slug: str
+
+
+@app.post("/api/avatar/select")
+def select_avatar(
+    request: SelectAvatarRequest, authorization: str | None = Header(None)
+) -> dict:
+    """着せ替え: 解除済みのコーデの中から、常に表示するものを選ぶ。
+
+    未解除のアイテムは選べない(avatar.select_item()が再確認する)。
+    """
+    user_id = _require_user_id(authorization)
+    if not avatar.select_item(user_id, request.slug):
+        raise HTTPException(status_code=400, detail="そのコーデはまだ解除されていません。")
+    return {"ok": True}
 
 
 @app.get("/api/activity")

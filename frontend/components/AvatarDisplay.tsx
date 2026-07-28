@@ -7,6 +7,9 @@ import type { AvatarItem } from "@/lib/types"
 interface AvatarDisplayProps {
   unlockedItems: AvatarItem[]
   mood?: string | null
+  /** 那由多さんの要望(着せ替え機能): 解除済みの中から明示的に選んだコーデ。
+   * 未指定・まだ選んだことが無ければ、従来通り最後に解除したものを表示する。 */
+  selectedSlug?: string | null
 }
 
 // NEUTRAL・未知の値は意図的に含めない(グロー無し=何も分からない時の安全な既定値)
@@ -27,8 +30,10 @@ const MOOD_GLOW: Record<string, string> = {
  * moodは直近の会話から検知した感情の傾向(src/chat/emotion.py参照)。新しい
  * イラスト素材を必要としない軽量な視覚効果として、控えめなグローで表現する。
  */
-export function AvatarDisplay({ unlockedItems, mood }: AvatarDisplayProps) {
-  const currentOutfit = unlockedItems[unlockedItems.length - 1]
+export function AvatarDisplay({ unlockedItems, mood, selectedSlug }: AvatarDisplayProps) {
+  const currentOutfit =
+    (selectedSlug ? unlockedItems.find((item) => item.slug === selectedSlug) : undefined) ??
+    unlockedItems[unlockedItems.length - 1]
   const src = currentOutfit ? `/avatar/${currentOutfit.asset}` : "/avatar/base.png"
   const alt = currentOutfit?.display_name ?? ""
   const glowColor = mood ? MOOD_GLOW[mood] : undefined

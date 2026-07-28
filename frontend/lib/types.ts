@@ -39,6 +39,7 @@ export interface AvatarItem {
 export interface AvatarState {
   unlockedItems: AvatarItem[];
   mood: string | null;
+  selectedSlug: string | null;
 }
 
 export interface ActivityEntry {

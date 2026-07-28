@@ -17,7 +17,7 @@ import { LiquidChrome } from "@/components/three/LiquidChrome"
 import { clearAuth, loadAuth, saveAuth, getCurrentUser } from "@/lib/auth"
 import { AuthError, fetchProactiveCheckin, streamChat } from "@/lib/api"
 import { getRecentActivity, getSleepStatus } from "@/lib/activity"
-import { getAvatarState } from "@/lib/avatar"
+import { getAvatarState, selectAvatarItem } from "@/lib/avatar"
 import { deleteConversation, getConversationMessages, listConversations } from "@/lib/conversations"
 import { applyProposal, getPendingProposals, rejectProposal } from "@/lib/evolution"
 import { dismissFeedback, getAllFeedback, submitFeedback } from "@/lib/userFeedback"
@@ -122,6 +122,7 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [avatarItems, setAvatarItems] = useState<AvatarItem[]>([])
   const [mood, setMood] = useState<string | null>(null)
+  const [selectedAvatarSlug, setSelectedAvatarSlug] = useState<string | null>(null)
   const [activityLogOpen, setActivityLogOpen] = useState(false)
   const [activities, setActivities] = useState<ActivityEntry[]>([])
   const [sleepInProgress, setSleepInProgress] = useState(false)
@@ -170,11 +171,24 @@ export default function Home() {
       .then((state) => {
         setAvatarItems(state.unlockedItems)
         setMood(state.mood)
+        setSelectedAvatarSlug(state.selectedSlug)
       })
       .catch((error) => {
         if (error instanceof AuthError) handleLogout()
       })
   }, [user])
+
+  const handleSelectAvatarItem = async (slug: string) => {
+    if (!user) return
+    // 即座に見た目を切り替え、サーバー側の反映は裏で待つ
+    // (着せ替えのような軽い操作でスピナーを挟むと重く感じるため)
+    setSelectedAvatarSlug(slug)
+    try {
+      await selectAvatarItem(user.token, slug)
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
+  }
 
   useEffect(() => {
     if (!user) return
@@ -599,6 +613,8 @@ export default function Home() {
               unlockCount={avatarItems.length}
               mood={mood}
               unlockedItems={avatarItems}
+              selectedSlug={selectedAvatarSlug}
+              onSelectAvatarItem={handleSelectAvatarItem}
               conversations={conversationList}
               activeConversationId={conversationId}
               onSelectConversation={handleSelectConversation}
@@ -699,7 +715,7 @@ export default function Home() {
             {!hasMessages && (
               <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
                 <div className="h-32 w-32 opacity-70 sm:h-40 sm:w-40">
-                  <AvatarDisplay unlockedItems={avatarItems} mood={mood} />
+                  <AvatarDisplay unlockedItems={avatarItems} mood={mood} selectedSlug={selectedAvatarSlug} />
                 </div>
                 <p className="text-center font-[family-name:var(--font-syne)] text-xl font-light text-white sm:text-2xl">
                   {user.name}さん、何を話そうか?

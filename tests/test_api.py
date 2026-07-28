@@ -359,7 +359,7 @@ def test_avatar_returns_empty_for_new_user(client):
     response = client.get("/api/avatar", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 200
-    assert response.json() == {"unlocked_items": [], "mood": None}
+    assert response.json() == {"unlocked_items": [], "mood": None, "selected_slug": None}
 
 
 def test_avatar_returns_unlocked_items_with_catalog_metadata(client):
@@ -420,6 +420,49 @@ def test_avatar_mood_is_scoped_per_user(client):
 
     assert user1_avatar["mood"] == "ANXIOUS"
     assert user2_avatar["mood"] is None
+
+
+def test_avatar_response_includes_selected_slug_field(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    body = register.json()
+
+    response = client.get("/api/avatar", headers={"Authorization": f"Bearer {body['token']}"})
+
+    assert response.json()["selected_slug"] is None
+
+
+def test_select_avatar_requires_auth(client):
+    response = client.post("/api/avatar/select", json={"slug": "chef_hat"})
+    assert response.status_code == 401
+
+
+def test_select_avatar_rejects_locked_item(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    token = register.json()["token"]
+
+    response = client.post(
+        "/api/avatar/select", json={"slug": "chef_hat"}, headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 400
+
+
+def test_select_avatar_succeeds_for_unlocked_item(client):
+    register = client.post("/api/auth/register", json={"name": "那由多", "password": "hunter2"})
+    body = register.json()
+    avatar.unlock_item(body["user_id"], "chef_hat")
+
+    select_response = client.post(
+        "/api/avatar/select",
+        json={"slug": "chef_hat"},
+        headers={"Authorization": f"Bearer {body['token']}"},
+    )
+    avatar_response = client.get(
+        "/api/avatar", headers={"Authorization": f"Bearer {body['token']}"}
+    ).json()
+
+    assert select_response.status_code == 200
+    assert avatar_response["selected_slug"] == "chef_hat"
 
 
 def test_activity_requires_auth(client):

@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { AvatarDisplay } from "@/components/AvatarDisplay"
 import { GlowBlob } from "@/components/GlowBlob"
@@ -37,6 +38,8 @@ interface SidebarProps {
   unlockCount: number
   mood: string | null
   unlockedItems: AvatarItem[]
+  selectedSlug: string | null
+  onSelectAvatarItem: (slug: string) => void
   conversations: Conversation[]
   activeConversationId: number | null
   onSelectConversation: (id: number) => void
@@ -68,6 +71,8 @@ export function Sidebar({
   unlockCount,
   mood,
   unlockedItems,
+  selectedSlug,
+  onSelectAvatarItem,
   conversations,
   activeConversationId,
   onSelectConversation,
@@ -79,6 +84,8 @@ export function Sidebar({
   onOpenFeedbackReview,
   onLogout,
 }: SidebarProps) {
+  const [pickerOpen, setPickerOpen] = useState(false)
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -120,16 +127,64 @@ export function Sidebar({
                   アンマウントされ、会話中は自分のアバターが一切見えなくなって
                   いた(那由多さんの指摘「新しく会話を開かないと自分のアバター
                   を見れない」)。チャット中でも常に開けるサイドバーに、小さな
-                  縮小表示を常設する。 */}
-              <div className="mt-3 flex items-center gap-3 border-t border-white/10 pt-3">
-                <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-white/10 bg-white/5">
-                  <AvatarDisplay unlockedItems={unlockedItems} mood={mood} />
-                </div>
-                <p className="min-w-0 truncate font-mono text-[10px] text-white/40">
-                  {unlockedItems.length > 0
-                    ? unlockedItems[unlockedItems.length - 1].display_name
-                    : "素体"}
-                </p>
+                  縮小表示を常設する。クリックすると、解除済みの中から着せ替え
+                  られるピッカーが開く(同じく那由多さんの要望)。 */}
+              <div className="mt-3 border-t border-white/10 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen((prev) => !prev)}
+                  disabled={unlockedItems.length === 0}
+                  className="flex w-full items-center gap-3 disabled:cursor-default"
+                >
+                  <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-white/10 bg-white/5">
+                    <AvatarDisplay unlockedItems={unlockedItems} mood={mood} selectedSlug={selectedSlug} />
+                  </div>
+                  <span className="min-w-0 flex-1 truncate text-left font-mono text-[10px] text-white/40">
+                    {unlockedItems.length > 0
+                      ? (unlockedItems.find((item) => item.slug === selectedSlug) ??
+                          unlockedItems[unlockedItems.length - 1]
+                        ).display_name
+                      : "素体"}
+                  </span>
+                  {unlockedItems.length > 0 && (
+                    <span className="shrink-0 font-mono text-[9px] uppercase tracking-widest text-white/30">
+                      {pickerOpen ? "閉じる" : "着替える"}
+                    </span>
+                  )}
+                </button>
+
+                <AnimatePresence>
+                  {pickerOpen && unlockedItems.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: DURATION.fast, ease: EASE }}
+                      className="mt-3 grid grid-cols-4 gap-2 overflow-hidden"
+                    >
+                      {unlockedItems.map((item) => (
+                        <button
+                          key={item.slug}
+                          type="button"
+                          aria-label={item.display_name}
+                          onClick={() => {
+                            onSelectAvatarItem(item.slug)
+                            setPickerOpen(false)
+                          }}
+                          className={cn(
+                            "aspect-square overflow-hidden rounded-full border transition-colors",
+                            item.slug === selectedSlug ||
+                              (!selectedSlug && item.slug === unlockedItems[unlockedItems.length - 1].slug)
+                              ? "border-[#b8935a]"
+                              : "border-white/10 hover:border-white/30",
+                          )}
+                        >
+                          <AvatarDisplay unlockedItems={[item]} />
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* ホーム画面から移した統計(会話数・解除数・ムード)。
