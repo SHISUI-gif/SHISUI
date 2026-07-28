@@ -613,7 +613,16 @@ def test_stream_shisui_reply_falls_back_to_secondary_groq_model_on_rate_limit(mo
 def test_stream_shisui_reply_returns_friendly_message_when_all_groq_tiers_exhausted(monkeypatch):
     """2026-07-28に本番で実際に発生: フォールバック先(llama-3.3-70b-versatile)
     自体もTPD上限に達し、3段目も無い当時は生のエラーダンプで会話が落ちていた。
-    全段が枯渇した場合でも、生のエラーではなく分かりやすい一言で会話を終える。"""
+    全段が枯渇した場合でも、生のエラーではなく分かりやすい一言で会話を終える。
+
+    ツール判定・モデル振り分け・感情検知はどれもemotion.py/model_router.py
+    独自のsettings参照を経由してgroq_client.chatを叩きうる(shisui_chat.settings
+    だけを差し替えても隔離できない)ため、実行環境のUSE_GROQ次第でこれらの
+    呼び出しがこのテストのfake_groq_chatに紛れ込み、callsの中身が変わって
+    しまっていた(2026-07-28、Oracle VM(実環境がUSE_GROQ=true)でこの汚染に
+    より実際にテストが落ちた)。_stream_with_think_fallback()のフォール
+    バック連鎖はstream=Trueで呼ぶのに対し、分類系の呼び出しは非ストリーミング
+    (stream=False)なので、これで確実に区別する。"""
     monkeypatch.setattr(
         shisui_chat,
         "settings",
@@ -629,7 +638,9 @@ def test_stream_shisui_reply_returns_friendly_message_when_all_groq_tiers_exhaus
     calls = []
 
     def fake_groq_chat(model, messages, tools=None, stream=False):
-        if tools:
+        if not stream:
+            # ツール判定・モデル振り分け・感情検知など、この関数の対象外の
+            # 分類系呼び出し。安全なデフォルトを返すだけにする。
             return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
         calls.append(model)
         raise groq.RateLimitError("rate_limit_exceeded", response=fake_response, body=None)
@@ -638,5 +649,5 @@ def test_stream_shisui_reply_returns_friendly_message_when_all_groq_tiers_exhaus
 
     results = list(shisui_chat.stream_shisui_reply("テスト", []))
 
-    assert calls[1:] == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+    assert calls[-2:] == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
     assert "使い切っちゃった" in results[-1]
