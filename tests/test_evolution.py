@@ -96,6 +96,38 @@ def test_generate_fix_text_falls_back_to_secondary_groq_model_on_rate_limit(monk
     assert calls == ["qwen/qwen3.6-27b", "llama-3.3-70b-versatile"]
 
 
+def test_generate_fix_text_falls_back_to_third_tier_when_second_also_rate_limited(monkeypatch):
+    """2026-07-28に本番で実際に発生: フォールバック先(llama-3.3-70b-versatile)
+    自体もTPD上限に達した。3段目のモデルまで用意しておくべき。"""
+    monkeypatch.setattr(
+        evolution,
+        "settings",
+        dataclasses.replace(
+            evolution.settings,
+            use_groq=True,
+            groq_coding_model="qwen/qwen3.6-27b",
+            groq_fallback_chat_model="llama-3.3-70b-versatile",
+            groq_second_fallback_chat_model="openai/gpt-oss-120b",
+        ),
+    )
+
+    fake_response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/x"))
+    calls = []
+
+    def fake_groq_chat(model, messages):
+        calls.append(model)
+        if model == "openai/gpt-oss-120b":
+            return {"message": {"content": "3段目で生成した修正案"}}
+        raise groq.RateLimitError("rate_limit_exceeded", response=fake_response, body=None)
+
+    monkeypatch.setattr(evolution.groq_client, "chat", fake_groq_chat)
+
+    result = evolution._generate_fix_text("何かのプロンプト")
+
+    assert result == "3段目で生成した修正案"
+    assert calls == ["qwen/qwen3.6-27b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+
+
 def test_generate_fix_proposals_skips_when_file_not_in_project(isolated_evolution, monkeypatch):
     error_log.log_error("some_source", ValueError("何か"))
     records = error_log._load_all()

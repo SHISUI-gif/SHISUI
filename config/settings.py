@@ -151,6 +151,11 @@ class Settings:
     # 別プールの非thinkingモデルへ1回だけフォールバックする(2026-07-27、
     # 本番で実際に200000 TPDを使い切って発生した障害への対処)。
     groq_fallback_chat_model: str = os.getenv("GROQ_FALLBACK_CHAT_MODEL", "llama-3.3-70b-versatile")
+    # 2026-07-28、フォールバック先(llama-3.3-70b-versatile)自体もTPD上限に
+    # 達する実害が出たため、3段目としてさらに別プールのモデルを用意する。
+    groq_second_fallback_chat_model: str = os.getenv(
+        "GROQ_SECOND_FALLBACK_CHAT_MODEL", "openai/gpt-oss-120b"
+    )
 
     # OpenRouter(無料枠、コーディング質問だけ限定で使う)。
     # OpenRouterの無料枠(:freeモデル)は1日50〜1000リクエストとGroqよりかなり

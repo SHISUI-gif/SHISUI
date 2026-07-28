@@ -105,6 +105,36 @@ def test_chat_falls_back_to_secondary_groq_model_on_rate_limit(monkeypatch):
     assert calls == ["qwen/qwen3.6-27b", "llama-3.3-70b-versatile"]
 
 
+def test_chat_falls_back_to_third_tier_when_second_also_rate_limited(monkeypatch):
+    """2026-07-28に本番で実際に発生: フォールバック先自体もTPD上限に達した。"""
+    monkeypatch.setattr(
+        llm_client,
+        "settings",
+        _fake_settings(
+            use_groq=True,
+            groq_chat_model="qwen/qwen3.6-27b",
+            groq_fallback_chat_model="llama-3.3-70b-versatile",
+            groq_second_fallback_chat_model="openai/gpt-oss-120b",
+        ),
+    )
+
+    fake_response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/x"))
+    calls = []
+
+    def fake_groq_chat(model, messages):
+        calls.append(model)
+        if model == "openai/gpt-oss-120b":
+            return {"message": {"content": "3段目応答"}}
+        raise groq.RateLimitError("rate_limit_exceeded", response=fake_response, body=None)
+
+    monkeypatch.setattr(llm_client.groq_client, "chat", fake_groq_chat)
+
+    result = llm_client.OllamaClient().chat("システム", "ユーザー")
+
+    assert result == "3段目応答"
+    assert calls == ["qwen/qwen3.6-27b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+
+
 def test_chat_messages_strips_whitespace(monkeypatch):
     monkeypatch.setattr(llm_client, "settings", _fake_settings(use_groq=True, groq_chat_model="m"))
     monkeypatch.setattr(

@@ -96,19 +96,24 @@ def _generate_fix_text(prompt: str) -> str:
 
     groq_coding_modelがGroq無料枠のTPD(1日あたりトークン)上限に達した場合は、
     shisui_chat.py:_stream_with_think_fallback()と同じく、別プールの
-    groq_fallback_chat_modelへ1回だけフォールバックする(2026-07-28、
-    自己修復・フィードバック自動反映の生成呼び出しにはこのフォールバックが
-    無く、日中の会話でTPDを使い切った直後にNO_DIFFを量産してしまっていた
-    ことが実際に発覚した)。"""
+    フォールバックモデルへ順に切り替える(2026-07-28、フォールバック先も
+    含め3段とも枯渇する実害が出たため3段構成に拡張)。"""
     if settings.use_groq:
-        try:
-            response = groq_client.chat(
-                model=settings.groq_coding_model, messages=[{"role": "user", "content": prompt}]
-            )
-        except groq.RateLimitError:
-            response = groq_client.chat(
-                model=settings.groq_fallback_chat_model, messages=[{"role": "user", "content": prompt}]
-            )
+        candidates = [
+            settings.groq_coding_model,
+            settings.groq_fallback_chat_model,
+            settings.groq_second_fallback_chat_model,
+        ]
+        response = None
+        for i, candidate_model in enumerate(candidates):
+            try:
+                response = groq_client.chat(
+                    model=candidate_model, messages=[{"role": "user", "content": prompt}]
+                )
+                break
+            except groq.RateLimitError:
+                if i == len(candidates) - 1:
+                    raise
     else:
         response = ollama.chat(
             model=settings.evolution_fix_model, messages=[{"role": "user", "content": prompt}]

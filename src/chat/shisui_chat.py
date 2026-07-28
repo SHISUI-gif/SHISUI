@@ -177,18 +177,29 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
         return
 
     if settings.use_groq:
-        try:
-            yield from groq_client.chat(model=model, messages=messages, stream=True)
-        except groq.RateLimitError:
-            # Groq無料枠のTPD(1日あたりトークン数)上限はモデルごとに独立した
-            # プールのため、qwen3.6-27b(thinkingモデルで消費が激しい)が枯渇
-            # しても、別モデルのプールはまだ余裕があることが多い。1回だけ
-            # フォールバックして会話を継続させる(2026-07-27、本番で実際に
-            # 200000 TPDを使い切って起きた障害への対処)。
-            yield from groq_client.chat(
-                model=settings.groq_fallback_chat_model, messages=messages, stream=True
-            )
-        return
+        # Groq無料枠のTPD(1日あたりトークン数)上限はモデルごとに独立したプール
+        # なので、1つのモデルが枯渇しても他のモデルはまだ余裕があることが多い。
+        # 2026-07-27に1段目→2段目のフォールバックを追加したが、2026-07-28に
+        # 2段目(groq_fallback_chat_model)自体も枯渇する実害が出たため3段構成に
+        # 拡張。3段目まで全て枯渇した場合は、生のエラーダンプではなく
+        # 分かりやすい一言を返して会話だけは終わらせる。
+        candidates = [model, settings.groq_fallback_chat_model, settings.groq_second_fallback_chat_model]
+        for i, candidate_model in enumerate(candidates):
+            try:
+                yield from groq_client.chat(model=candidate_model, messages=messages, stream=True)
+                return
+            except groq.RateLimitError:
+                if i == len(candidates) - 1:
+                    yield {
+                        "message": {
+                            "content": (
+                                "ごめん、今日使える分のAIの割り当てを使い切っちゃったみたい…💦"
+                                "しばらく経ったらまた話しかけてみてね!"
+                            )
+                        }
+                    }
+                    return
+                continue
 
     # 常時使う軽量な分類モデル(_stream_shisui_events_inner内の並列呼び出し)は
     # ここでのkeep_alive調整の対象外にして、既定のまま素早く再利用できるようにする。

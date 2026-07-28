@@ -608,3 +608,35 @@ def test_stream_shisui_reply_falls_back_to_secondary_groq_model_on_rate_limit(mo
 
     assert results[-1] == "フォールバックで応答するね"
     assert calls[-1] == "llama-3.3-70b-versatile"
+
+
+def test_stream_shisui_reply_returns_friendly_message_when_all_groq_tiers_exhausted(monkeypatch):
+    """2026-07-28に本番で実際に発生: フォールバック先(llama-3.3-70b-versatile)
+    自体もTPD上限に達し、3段目も無い当時は生のエラーダンプで会話が落ちていた。
+    全段が枯渇した場合でも、生のエラーではなく分かりやすい一言で会話を終える。"""
+    monkeypatch.setattr(
+        shisui_chat,
+        "settings",
+        dataclasses.replace(
+            shisui_chat.settings,
+            use_groq=True,
+            groq_fallback_chat_model="llama-3.3-70b-versatile",
+            groq_second_fallback_chat_model="openai/gpt-oss-120b",
+        ),
+    )
+
+    fake_response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/x"))
+    calls = []
+
+    def fake_groq_chat(model, messages, tools=None, stream=False):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+        calls.append(model)
+        raise groq.RateLimitError("rate_limit_exceeded", response=fake_response, body=None)
+
+    monkeypatch.setattr(shisui_chat.groq_client, "chat", fake_groq_chat)
+
+    results = list(shisui_chat.stream_shisui_reply("テスト", []))
+
+    assert calls[1:] == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+    assert "使い切っちゃった" in results[-1]

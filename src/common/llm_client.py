@@ -53,13 +53,17 @@ class OllamaClient:
         if self._use_groq:
             # Groqアダプターはthink/keep_alive同様temperatureの概念も持たない
             # (既存のGroq呼び出し箇所全てで同様に無視している、この関数固有の
-            # 制約ではない)。
-            try:
-                response = groq_client.chat(model=self.model, messages=messages)
-            except groq.RateLimitError:
-                # shisui_chat.py・evolution.pyと同じフォールバック
-                # (Groq無料枠のTPD上限はモデルごとに独立したプールのため)。
-                response = groq_client.chat(model=settings.groq_fallback_chat_model, messages=messages)
+            # 制約ではない)。shisui_chat.py・evolution.pyと同じ3段フォールバック
+            # (Groq無料枠のTPD上限はモデルごとに独立したプールのため)。
+            candidates = [self.model, settings.groq_fallback_chat_model, settings.groq_second_fallback_chat_model]
+            response = None
+            for i, candidate_model in enumerate(candidates):
+                try:
+                    response = groq_client.chat(model=candidate_model, messages=messages)
+                    break
+                except groq.RateLimitError:
+                    if i == len(candidates) - 1:
+                        raise
         else:
             response = self._client.chat(
                 model=self.model,
