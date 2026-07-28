@@ -108,7 +108,7 @@ def run_sleep_cycle(llm: OllamaClient | None = None) -> SleepCycleResult:
     (voicechat等、Web版のユーザー概念導入より前からある単一ユーザー向け機能)は
     圧縮対象から外す(誰の長期記憶として保存すべきか特定できないため)。
     """
-    llm = llm or OllamaClient()
+    llm = llm or OllamaClient(force_local=True)
     episodes = hippocampus.get_unconsolidated_episodes()
     if not episodes:
         return SleepCycleResult(episodes_considered=0, memories_added=0, memories_superseded=0)

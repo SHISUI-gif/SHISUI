@@ -191,7 +191,7 @@ def ingest_one_work(
 
 def run_ingest(force: bool = False, llm: OllamaClient | None = None) -> IngestResult:
     """厳選作品を取り込み、文学的感性コーパスへスタイル記述子を追加する。"""
-    llm = llm or OllamaClient()
+    llm = llm or OllamaClient(force_local=True)
     collection = _get_collection()
     result = IngestResult()
 

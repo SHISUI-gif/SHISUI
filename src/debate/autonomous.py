@@ -38,7 +38,7 @@ class AutonomousDebateResult:
 
 def run_autonomous_debate(llm: OllamaClient | None = None) -> AutonomousDebateResult:
     """弱点トピックについて自律的に討論し、結論を新皮質へ保存する。学ぶべき材料が無ければスキップする。"""
-    llm = llm or OllamaClient()
+    llm = llm or OllamaClient(force_local=True)
 
     topics = weakness_finder.find_weak_topics(llm=llm)
     if not topics:

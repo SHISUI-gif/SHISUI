@@ -106,7 +106,7 @@ def run_study_session(
 ) -> StudySessionResult:
     """弱点トピック+今日のニュース(社会科学習)を見つけ、メンターと議論し、
     教訓を新皮質へ保存する。学ぶべき材料が一つも無ければスキップする。"""
-    llm = llm or OllamaClient()
+    llm = llm or OllamaClient(force_local=True)
 
     topics = weakness_finder.find_weak_topics(llm=llm) + _collect_news_topics()
     if not topics:

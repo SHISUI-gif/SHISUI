@@ -44,6 +44,64 @@ def test_chat_messages_uses_local_ollama_when_use_groq_false(monkeypatch):
     assert captured["model"] == "qwen2.5:32b"
 
 
+def test_force_local_uses_ollama_even_when_use_groq_true(monkeypatch):
+    """2026-07-29の回帰テスト: 睡眠モード・夜間修行・自律討論のような速度が
+    問題にならないバックグラウンド処理は、use_groq=trueの環境でもGroqの
+    TPD消費を避けるため常にローカルOllamaを使うべき(那由多さんの提案)。"""
+    monkeypatch.setattr(
+        llm_client,
+        "settings",
+        _fake_settings(use_groq=True, groq_chat_model="qwen/qwen3.6-27b", local_background_model="qwen3:14b"),
+    )
+
+    captured = {}
+
+    class FakeOllamaClient:
+        def __init__(self, host=None):
+            pass
+
+        def chat(self, model, messages, options=None):
+            captured["model"] = model
+            return {"message": {"content": "ローカル応答"}}
+
+    monkeypatch.setattr(ollama, "Client", FakeOllamaClient)
+
+    def fail_groq_chat(model, messages):
+        raise AssertionError("force_local=Trueの時はGroqを呼ぶべきではない")
+
+    monkeypatch.setattr(llm_client.groq_client, "chat", fail_groq_chat)
+
+    client = llm_client.OllamaClient(force_local=True)
+    result = client.chat("システム", "ユーザー")
+
+    assert result == "ローカル応答"
+    assert captured["model"] == "qwen3:14b"
+
+
+def test_force_local_respects_explicit_model_override(monkeypatch):
+    monkeypatch.setattr(
+        llm_client,
+        "settings",
+        _fake_settings(use_groq=True, local_background_model="qwen3:14b"),
+    )
+
+    captured = {}
+
+    class FakeOllamaClient:
+        def __init__(self, host=None):
+            pass
+
+        def chat(self, model, messages, options=None):
+            captured["model"] = model
+            return {"message": {"content": "ok"}}
+
+    monkeypatch.setattr(ollama, "Client", FakeOllamaClient)
+
+    llm_client.OllamaClient(model="qwen3:8b", force_local=True).chat("システム", "ユーザー")
+
+    assert captured["model"] == "qwen3:8b"
+
+
 def test_chat_messages_uses_groq_when_use_groq_true(monkeypatch):
     monkeypatch.setattr(
         llm_client, "settings", _fake_settings(use_groq=True, groq_chat_model="qwen/qwen3.6-27b")

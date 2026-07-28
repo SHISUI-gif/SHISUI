@@ -52,7 +52,7 @@ def run_daily_archive_crawl(
     daily_limit: int | None = None, llm: OllamaClient | None = None
 ) -> ArchiveCrawlResult:
     """未処理の作家・作品を、1日あたりの上限件数まで取り込む。"""
-    llm = llm or OllamaClient()
+    llm = llm or OllamaClient(force_local=True)
     daily_limit = daily_limit or settings.aozora_archive_daily_limit
 
     progress = _load_progress()

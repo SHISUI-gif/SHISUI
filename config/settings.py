@@ -49,6 +49,12 @@ class Settings:
     tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5")
+    # 睡眠モード・夜間修行・自律討論・青空文庫クロールのような夜間バックグラウンド
+    # 処理専用のローカルモデル(OllamaClient(force_local=True)が使う)。
+    # 応答速度がチャットほど問題にならないため、use_groqの値に関わらず常に
+    # ローカルOllamaを使い、Groq無料枠のTPD消費をチャット用に温存する
+    # (2026-07-29、VMを4 OCPU/24GBへ拡張しqwen3:14bを追加した際に導入)。
+    local_background_model: str = os.getenv("LOCAL_BACKGROUND_MODEL", "qwen3:14b")
 
     # 議事録作成機能
     huggingface_token: str = os.getenv("HUGGINGFACE_TOKEN", "")

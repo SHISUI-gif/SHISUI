@@ -25,14 +25,25 @@ class OllamaClient:
     呼び出し側が明示的にmodelを渡さない限り、Groq時はsettings.groq_chat_model
     を使う(用途を問わない汎用の1往復チャットのため、既定のチャットモデルが
     最も妥当)。
+
+    force_local=True: 睡眠モード・夜間修行・自律討論・青空文庫クロールのような
+    夜間バックグラウンド処理は、チャットと違って応答速度が問題にならない
+    (那由多さんの指摘、2026-07-29: 「睡眠学習の時にこのモデル使えばよくね」)。
+    use_groqの値に関わらず常にローカルOllamaを使わせることで、これらの
+    バックグラウンド処理をGroq無料枠のTPD消費から完全に外し、チャット用の
+    枠を圧迫しないようにする(VMを4 OCPU/24GBへ拡張し、qwen3:14b程度の
+    ローカルモデルを追加した前提)。
     """
 
-    def __init__(self, model: str | None = None, host: str | None = None) -> None:
-        self._use_groq = settings.use_groq
+    def __init__(
+        self, model: str | None = None, host: str | None = None, *, force_local: bool = False
+    ) -> None:
+        self._use_groq = settings.use_groq and not force_local
         if self._use_groq:
             self.model = model or settings.groq_chat_model
         else:
-            self.model = model or settings.ollama_model
+            default_model = settings.local_background_model if force_local else settings.ollama_model
+            self.model = model or default_model
             self._client = ollama.Client(host=host or settings.ollama_host)
 
     def chat(self, system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
