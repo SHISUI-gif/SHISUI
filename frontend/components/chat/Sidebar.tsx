@@ -38,6 +38,7 @@ interface SidebarProps {
   conversations: Conversation[]
   activeConversationId: number | null
   onSelectConversation: (id: number) => void
+  onDeleteConversation: (id: number) => void
   onNewConversation: () => void
   onOpenActivityLog: () => void
   onOpenEvolutionProposals: () => void
@@ -67,6 +68,7 @@ export function Sidebar({
   conversations,
   activeConversationId,
   onSelectConversation,
+  onDeleteConversation,
   onNewConversation,
   onOpenActivityLog,
   onOpenEvolutionProposals,
@@ -142,23 +144,40 @@ export function Sidebar({
               )}
               <motion.div variants={listContainer} initial="hidden" animate="visible">
                 {conversations.map((conversation) => (
-                  <motion.button
+                  <motion.div
                     key={conversation.id}
                     variants={listItem}
-                    type="button"
-                    onClick={() => {
-                      onSelectConversation(conversation.id)
-                      onClose()
-                    }}
-                    className={cn(
-                      "block w-full truncate px-3 py-2 text-left text-sm transition-colors",
-                      conversation.id === activeConversationId
-                        ? "bg-white/10 text-white"
-                        : "text-white/50 hover:bg-white/5 hover:text-white/80",
-                    )}
+                    className="group flex items-center"
                   >
-                    {conversation.title}
-                  </motion.button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectConversation(conversation.id)
+                        onClose()
+                      }}
+                      className={cn(
+                        "block min-w-0 flex-1 truncate px-3 py-2 text-left text-sm transition-colors",
+                        conversation.id === activeConversationId
+                          ? "bg-white/10 text-white"
+                          : "text-white/50 hover:bg-white/5 hover:text-white/80",
+                      )}
+                    >
+                      {conversation.title}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="この会話を削除"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        if (window.confirm(`「${conversation.title}」を削除しますか?`)) {
+                          onDeleteConversation(conversation.id)
+                        }
+                      }}
+                      className="shrink-0 px-2 py-2 text-white/20 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                    >
+                      ✕
+                    </button>
+                  </motion.div>
                 ))}
               </motion.div>
             </div>

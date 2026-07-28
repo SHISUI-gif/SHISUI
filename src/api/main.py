@@ -166,6 +166,20 @@ def list_conversations(authorization: str | None = Header(None)) -> list[dict]:
     ]
 
 
+@app.delete("/api/conversations/{conversation_id}")
+def delete_conversation(conversation_id: int, authorization: str | None = Header(None)) -> dict:
+    """ログイン中のユーザー自身の会話スレッドを削除する。
+
+    他人の会話は削除できない(conversations.delete_conversation()が
+    所有者一致チェックを行う)。見つからない・所有者不一致のどちらでも
+    存在を漏らさないよう同じ404を返す。
+    """
+    user_id = _require_user_id(authorization)
+    if not conversations.delete_conversation(conversation_id, user_id):
+        raise HTTPException(status_code=404, detail="会話が見つかりませんでした。")
+    return {"ok": True}
+
+
 @app.get("/api/conversations/{conversation_id}/messages")
 def get_conversation_messages(
     conversation_id: int, authorization: str | None = Header(None)

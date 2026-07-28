@@ -85,6 +85,25 @@ def list_conversations(user_id: int) -> list[Conversation]:
     return [Conversation(id=r[0], title=r[1], created_at=r[2], updated_at=r[3]) for r in rows]
 
 
+def delete_conversation(conversation_id: int, user_id: int) -> bool:
+    """指定した会話スレッドと、それに紐づく海馬(episodes)の履歴を削除する。
+
+    get_messages()と同じ「所有者一致チェック」を行い、他人のconversation_id
+    を渡されても削除できないようにする(存在するかどうかも漏らさないよう、
+    見つからない・所有者不一致のどちらもFalseを返すだけに留める)。
+    """
+    with _connect() as conn:
+        owner_row = conn.execute(
+            "SELECT user_id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        if owner_row is None or owner_row[0] != user_id:
+            return False
+
+        conn.execute("DELETE FROM episodes WHERE conversation_id = ?", (conversation_id,))
+        conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+    return True
+
+
 def get_messages(conversation_id: int, user_id: int) -> list[dict]:
     """指定した会話のメッセージ履歴を返す。user_idが一致しない場合は空リストを返す
     (他人のconversation_idを渡されても中身を見せないための唯一のチェック)。"""

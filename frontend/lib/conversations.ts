@@ -27,3 +27,14 @@ export async function getConversationMessages(
   if (!response.ok) return []
   return response.json()
 }
+
+export async function deleteConversation(token: string, conversationId: number): Promise<boolean> {
+  const response = await fetch(`/api/conversations/${conversationId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  })
+  if (response.status === 401) {
+    throw new AuthError("セッションが切れました。もう一度ログインしてください。")
+  }
+  return response.ok
+}

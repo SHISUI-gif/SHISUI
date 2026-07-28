@@ -225,6 +225,75 @@ def test_conversation_messages_hidden_from_non_owner(client, monkeypatch):
     assert other_view == []
 
 
+def test_delete_conversation_requires_auth(client):
+    response = client.delete("/api/conversations/1")
+    assert response.status_code == 401
+
+
+def test_delete_conversation_removes_it_and_its_messages(client, monkeypatch):
+    monkeypatch.setattr(ollama, "chat", _fake_chat)
+
+    user = client.post("/api/auth/register", json={"name": "那由多", "password": "pw"}).json()
+    client.post(
+        "/api/chat",
+        json={"message": "消したい会話", "history": []},
+        headers={"Authorization": f"Bearer {user['token']}"},
+    )
+    conversation_id = client.get(
+        "/api/conversations", headers={"Authorization": f"Bearer {user['token']}"}
+    ).json()[0]["id"]
+
+    response = client.delete(
+        f"/api/conversations/{conversation_id}", headers={"Authorization": f"Bearer {user['token']}"}
+    )
+
+    assert response.status_code == 200
+    remaining = client.get(
+        "/api/conversations", headers={"Authorization": f"Bearer {user['token']}"}
+    ).json()
+    assert remaining == []
+    messages = client.get(
+        f"/api/conversations/{conversation_id}/messages",
+        headers={"Authorization": f"Bearer {user['token']}"},
+    ).json()
+    assert messages == []
+
+
+def test_delete_conversation_rejects_non_owner(client, monkeypatch):
+    monkeypatch.setattr(ollama, "chat", _fake_chat)
+
+    user1 = client.post("/api/auth/register", json={"name": "ユーザー1", "password": "pw1"}).json()
+    user2 = client.post("/api/auth/register", json={"name": "ユーザー2", "password": "pw2"}).json()
+    client.post(
+        "/api/chat",
+        json={"message": "ユーザー1の会話", "history": []},
+        headers={"Authorization": f"Bearer {user1['token']}"},
+    )
+    conversation_id = client.get(
+        "/api/conversations", headers={"Authorization": f"Bearer {user1['token']}"}
+    ).json()[0]["id"]
+
+    response = client.delete(
+        f"/api/conversations/{conversation_id}", headers={"Authorization": f"Bearer {user2['token']}"}
+    )
+
+    assert response.status_code == 404
+    still_there = client.get(
+        "/api/conversations", headers={"Authorization": f"Bearer {user1['token']}"}
+    ).json()
+    assert len(still_there) == 1
+
+
+def test_delete_conversation_returns_404_for_nonexistent_id(client):
+    user = client.post("/api/auth/register", json={"name": "那由多", "password": "pw"}).json()
+
+    response = client.delete(
+        "/api/conversations/99999", headers={"Authorization": f"Bearer {user['token']}"}
+    )
+
+    assert response.status_code == 404
+
+
 def test_concurrent_chat_requests_queue_instead_of_hanging_silently(client, monkeypatch):
     """Ollamaは実質1リクエストずつしか処理できない(-np 1)。友達数人が同時に
     メッセージを送ったとき、後続のリクエストが無言のまま待たされると

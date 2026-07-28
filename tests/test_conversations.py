@@ -76,6 +76,30 @@ def test_get_messages_returns_empty_for_nonexistent_conversation():
     assert conversations.get_messages(9999, user_id=1) == []
 
 
+def test_delete_conversation_removes_thread_and_its_messages():
+    conversation_id = conversations.create_conversation(user_id=1, first_message="消したい会話")
+    hippocampus.log_episode(
+        role="user", content="消したい会話", source="chat", user_id=1, conversation_id=conversation_id
+    )
+
+    assert conversations.delete_conversation(conversation_id, user_id=1) is True
+
+    assert conversations.list_conversations(user_id=1) == []
+    assert conversations.get_messages(conversation_id, user_id=1) == []
+
+
+def test_delete_conversation_refuses_for_non_owner():
+    conversation_id = conversations.create_conversation(user_id=1, first_message="秘密の会話")
+
+    assert conversations.delete_conversation(conversation_id, user_id=2) is False
+    # 削除されずに残っていること
+    assert len(conversations.list_conversations(user_id=1)) == 1
+
+
+def test_delete_conversation_returns_false_for_nonexistent_id():
+    assert conversations.delete_conversation(9999, user_id=1) is False
+
+
 def test_touch_conversation_updates_ordering():
     first_id = conversations.create_conversation(user_id=1, first_message="最初の会話")
     second_id = conversations.create_conversation(user_id=1, first_message="2番目の会話")

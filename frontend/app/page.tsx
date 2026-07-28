@@ -18,7 +18,7 @@ import { clearAuth, loadAuth, saveAuth, getCurrentUser } from "@/lib/auth"
 import { AuthError, fetchProactiveCheckin, streamChat } from "@/lib/api"
 import { getRecentActivity, getSleepStatus } from "@/lib/activity"
 import { getAvatarState } from "@/lib/avatar"
-import { getConversationMessages, listConversations } from "@/lib/conversations"
+import { deleteConversation, getConversationMessages, listConversations } from "@/lib/conversations"
 import { applyProposal, getPendingProposals, rejectProposal } from "@/lib/evolution"
 import { dismissFeedback, getAllFeedback, submitFeedback } from "@/lib/userFeedback"
 import { cn } from "@/lib/utils"
@@ -294,6 +294,22 @@ export default function Home() {
     try {
       setMessages(await getConversationMessages(user.token, id))
       setChatOpen(true)
+    } catch (error) {
+      if (error instanceof AuthError) handleLogout()
+    }
+  }
+
+  const handleDeleteConversation = async (id: number) => {
+    if (!user) return
+    try {
+      const ok = await deleteConversation(user.token, id)
+      if (!ok) return
+      setConversationList((prev) => prev.filter((c) => c.id !== id))
+      // 今開いている会話を消した場合は、真っさらな新規会話の状態に戻す
+      // (削除したはずの会話がそのまま表示され続けるのを防ぐため)
+      if (conversationIdRef.current === id) {
+        handleNewConversation()
+      }
     } catch (error) {
       if (error instanceof AuthError) handleLogout()
     }
@@ -585,6 +601,7 @@ export default function Home() {
               conversations={conversationList}
               activeConversationId={conversationId}
               onSelectConversation={handleSelectConversation}
+              onDeleteConversation={handleDeleteConversation}
               onNewConversation={handleNewConversation}
               onOpenActivityLog={handleOpenActivityLog}
               onOpenEvolutionProposals={handleOpenEvolutionProposals}
