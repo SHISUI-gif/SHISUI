@@ -519,6 +519,66 @@ def test_stream_shisui_events_falls_back_when_groq_tool_detection_rejects_call(m
     assert any(e["source"] == "tool_detection" for e in logged)
 
 
+def test_stream_shisui_events_falls_back_when_tool_detection_request_too_large(monkeypatch, tmp_path):
+    """2026-07-28に本番で実際に発生: 413(Request too large)はgroq.BadRequestError
+    ではなく共通基底クラスgroq.APIStatusErrorとして送出されるため、
+    BadRequestErrorだけを拾うexceptでは素通ししてしまい、会話全体が
+    生のエラーダンプで落ちていた。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+    monkeypatch.setattr(
+        shisui_chat, "settings", dataclasses.replace(shisui_chat.settings, use_groq=True)
+    )
+
+    fake_response = httpx.Response(413, request=httpx.Request("POST", "https://api.groq.com/x"))
+
+    def fake_groq_chat(model, messages, tools=None, stream=False):
+        if tools:
+            raise groq.APIStatusError("request too large", response=fake_response, body=None)
+        assert stream is True
+        return iter([{"message": {"content": "ツール判定はスキップして応答するね"}}])
+
+    monkeypatch.setattr(shisui_chat.groq_client, "chat", fake_groq_chat)
+
+    results = list(shisui_chat.stream_shisui_reply("何か聞きたいことがあるんだけど", []))
+
+    assert results[-1] == "ツール判定はスキップして応答するね"
+    logged = error_log.get_unreviewed_errors()
+    assert any(e["source"] == "tool_detection" for e in logged)
+
+
+def test_tool_detection_call_excludes_persona_prompt_and_caps_history(monkeypatch, tmp_path):
+    """2026-07-28の回帰テスト: 会話が長くなるほどフルの人格プロンプト+履歴全体を
+    軽量分類モデルに渡してしまい、TPM(1分あたりトークン数)上限を超えて
+    413になっていた。ツール判定にはフルの人格プロンプトは不要で、履歴も
+    直近数ターンだけに絞るべき。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+
+    captured = {}
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"メッセージ{i}"} for i in range(40)
+    ]
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            captured["messages"] = messages
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+
+        def gen():
+            yield {"message": {"content": "応答するね。"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    list(shisui_chat.stream_shisui_reply("最新の発言", long_history))
+
+    tool_messages = captured["messages"]
+    assert shisui_chat.SHISUI_SYSTEM_PROMPT not in tool_messages[0]["content"]
+    assert tool_messages[0]["content"] == shisui_chat.TOOL_DETECTION_SYSTEM_PROMPT
+    # system 1件 + 直近数ターンのみで、40件全部を積み上げていないこと
+    assert len(tool_messages) <= shisui_chat._TOOL_DETECTION_HISTORY_TURNS + 2
+
+
 def test_stream_shisui_reply_falls_back_to_secondary_groq_model_on_rate_limit(monkeypatch):
     """2026-07-27に本番で実際に発生: Groq無料枠のTPD(1日あたりトークン)上限に
     達すると429が返り、会話が完全に止まってしまっていた。モデルごとに独立した

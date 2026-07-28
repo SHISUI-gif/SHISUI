@@ -132,6 +132,16 @@ def _trigger_background_evolution_scan() -> None:
 _MODEL_SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)b", re.IGNORECASE)
 _HEAVY_MODEL_PARAM_THRESHOLD = 20  # 億単位ではなくB(billion)単位のパラメータ数
 
+TOOL_DETECTION_SYSTEM_PROMPT = (
+    "あなたは志粋というAIアシスタントの、ツール呼び出し判定専用の内部処理です。"
+    "直近の会話とユーザーの最新の発言を見て、提供されたツールを使うべきか判断して"
+    "ください。ツールが必要な場合だけ呼び出し、雑談など不要な場合はツールを"
+    "呼ばずに何も出力しないでください。"
+)
+# フルの人格プロンプト・記憶検索結果は渡さず、直近の履歴もここまでに絞る
+# (会話が長くなるほどTPM上限を超えて413になっていた実害への対処、2026-07-28)。
+_TOOL_DETECTION_HISTORY_TURNS = 6
+
 
 def _keep_alive_for(model: str) -> str:
     """モデルサイズに応じてkeep_aliveを変える。
@@ -317,22 +327,35 @@ def _stream_shisui_events_inner(
     # ツール判定は振り分け先の大きいモデル(qwen2.5:32b等)ではなく軽量な分類モデルを使う
     # (応答が全く届かない時間が長引くと、Cloudflareトンネル経由で524タイムアウトになるため)。
     # messagesの構築(=記憶検索の結果)に依存するため、上の並列バッチには含められない。
+    #
+    # フルのsystem_content(人格プロンプト+記憶検索結果+文学的感性ヒント等)や
+    # 会話履歴全体は渡さない。ツール判定に必要なのは直近の文脈と最新の発言だけで、
+    # 会話が長くなるほどフルの履歴を渡すと軽量モデルのTPM(1分あたりトークン数)
+    # 上限を超えて413(Request too large)になる実害があった(2026-07-28、本番で
+    # 実際にlllama-3.1-8b-instantのTPM 6000を超過して発生)。
+    tool_messages = [{"role": "system", "content": TOOL_DETECTION_SYSTEM_PROMPT}]
+    tool_messages.extend(_normalize_history(history)[-_TOOL_DETECTION_HISTORY_TURNS:])
+    tool_messages.append({"role": "user", "content": user_message})
+
     tool_client = groq_client if settings.use_groq else ollama
     tool_model = settings.groq_classifier_model if settings.use_groq else settings.router_classifier_model
     try:
         first_response = tool_client.chat(
             model=tool_model,
-            messages=messages,
+            messages=tool_messages,
             tools=ALL_TOOL_SCHEMAS,
         )
         assistant_message = first_response["message"]
         tool_calls = assistant_message["tool_calls"] if "tool_calls" in assistant_message else None
-    except groq.BadRequestError as exc:
+    except groq.APIStatusError as exc:
         # Groqの一部軽量モデル(llama-3.1-8b-instant等)は、構造化ツール呼び出し
-        # ではなく独自の関数呼び出し記法("<function=...>")を出力してしまうことが
-        # あり、Groq側がそれをtool_use_failedとして即400で拒否してくる(2026-07-27、
-        # 本番で実際に発生)。ツール検知1回の失敗で会話全体を落とすのではなく、
-        # 今回はツール無しとして扱い、通常の応答生成へフォールバックする。
+        # ではなく独自の関数呼び出し記法("<function=...>")を出力して400
+        # tool_use_failedになることがあり(2026-07-27)、また上記の対策後も
+        # なお413(リクエストが大きすぎる)になりうる。ツール検知1回の失敗で
+        # 会話全体を落とすのではなく、今回はツール無しとして扱い、通常の
+        # 応答生成へフォールバックする(APIStatusErrorはBadRequestError/
+        # RateLimitError等の共通基底クラスなので、この種のステータスエラーを
+        # まとめて拾える)。
         error_log.log_error(source="tool_detection", exc=exc)
         assistant_message = {"role": "assistant", "content": "", "tool_calls": None}
         tool_calls = None
