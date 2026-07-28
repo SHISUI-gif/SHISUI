@@ -579,6 +579,38 @@ def test_tool_detection_call_excludes_persona_prompt_and_caps_history(monkeypatc
     assert len(tool_messages) <= shisui_chat._TOOL_DETECTION_HISTORY_TURNS + 2
 
 
+def test_main_generation_call_caps_history_length(monkeypatch, tmp_path):
+    """2026-07-29に本番で実際に発生: 最終回答生成の会話履歴も無制限に積んで
+    おり、長い会話ではフルの人格プロンプト+記憶検索結果+全履歴の合計が
+    qwen3.6-27b自体のTPM上限(8000)を超えて413になっていた。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+
+    captured = {}
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"メッセージ{i}"} for i in range(40)
+    ]
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+
+        captured["messages"] = messages
+
+        def gen():
+            yield {"message": {"content": "応答するね。"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    list(shisui_chat.stream_shisui_reply("最新の発言", long_history))
+
+    main_messages = captured["messages"]
+    # system 1件 + 直近ターン + 今回のuser発言1件のみで、40件全部を
+    # 積み上げていないこと
+    assert len(main_messages) <= shisui_chat._MAIN_GENERATION_HISTORY_TURNS + 2
+
+
 def test_stream_shisui_reply_falls_back_to_secondary_groq_model_on_rate_limit(monkeypatch):
     """2026-07-27に本番で実際に発生: Groq無料枠のTPD(1日あたりトークン)上限に
     達すると429が返り、会話が完全に止まってしまっていた。モデルごとに独立した

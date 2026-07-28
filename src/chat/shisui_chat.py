@@ -141,6 +141,11 @@ TOOL_DETECTION_SYSTEM_PROMPT = (
 # フルの人格プロンプト・記憶検索結果は渡さず、直近の履歴もここまでに絞る
 # (会話が長くなるほどTPM上限を超えて413になっていた実害への対処、2026-07-28)。
 _TOOL_DETECTION_HISTORY_TURNS = 6
+# 最終回答生成の会話履歴も同じ理由で無制限には積まない(2026-07-29、
+# qwen3.6-27b自体のTPM上限(8000)を、長い会話ではフルの人格プロンプト+
+# 記憶検索結果+全履歴の合計が超えてしまい413になる実害が発生)。ツール判定
+# より文脈の連続性が重要なため、少し長めに取る。
+_MAIN_GENERATION_HISTORY_TURNS = 20
 
 
 def _keep_alive_for(model: str) -> str:
@@ -323,7 +328,7 @@ def _stream_shisui_events_inner(
         study_report.mark_report_read()
 
     messages = [{"role": "system", "content": system_content}]
-    messages.extend(_normalize_history(history))
+    messages.extend(_normalize_history(history)[-_MAIN_GENERATION_HISTORY_TURNS:])
     messages.append({"role": "user", "content": user_message})
 
     hippocampus.log_episode(
