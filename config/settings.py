@@ -37,6 +37,7 @@ USER_FEEDBACK_FILE = EVOLUTION_DIR / "user_feedback.json"
 PENDING_PATCHES_DIR = EVOLUTION_DIR / "pending"
 STUDY_MARKER_FILE = STUDY_DIR / "last_study_date.txt"
 DEBATE_AUTONOMOUS_MARKER_FILE = DEBATE_DIR / "last_autonomous_debate_date.txt"
+EXTERNAL_DIALOGUE_MARKER_FILE = STUDY_DIR / "last_external_dialogue_date.txt"
 ACTIVITY_DIR = BASE_DIR / "output" / "activity"
 ACTIVITY_LOG_FILE = ACTIVITY_DIR / "activity_log.json"
 
@@ -171,6 +172,17 @@ class Settings:
     # 従来通りOllama/Groqでコーディング質問も処理する。
     openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
     openrouter_coding_model: str = os.getenv("OPENROUTER_CODING_MODEL", "qwen/qwen3-coder:free")
+
+    # OpenRouter無料枠を使った「先輩AI」との夜間対話(自律討論・夜間修行(Gemini)とは別枠)。
+    # 2026-07-29、那由多さんの要望(Gemini以外の無料APIも試したい、予算は1晩数十円まで)を
+    # 受けて追加。OPENROUTER_API_KEY未設定なら黙ってスキップする(こっそり課金しない設計は
+    # 夜間修行のGemini連携と同じ)。モデルタグはOpenRouter側の無料枠ラインナップ変更で
+    # 404することがあるため、https://openrouter.ai/models?max_price=0 で有効なタグを
+    # 確認のうえ必要なら差し替えること。
+    openrouter_free_mentor_model: str = os.getenv(
+        "OPENROUTER_FREE_MENTOR_MODEL", "deepseek/deepseek-r1:free"
+    )
+    external_dialogue_turns: int = int(os.getenv("EXTERNAL_DIALOGUE_TURNS", "3"))
 
     # 夜間トリガー(睡眠・自律学習・自律討論を「夜眠っている間」だけ動かす)
     night_mode_start_hour: int = int(os.getenv("NIGHT_MODE_START_HOUR", "23"))

@@ -44,7 +44,7 @@ export interface AvatarState {
 
 export interface ActivityEntry {
   timestamp: string;
-  kind: "sleep" | "study" | "debate" | "self_repair";
+  kind: "sleep" | "study" | "debate" | "self_repair" | "external_dialogue";
   summary: string;
   details: Record<string, unknown>;
 }

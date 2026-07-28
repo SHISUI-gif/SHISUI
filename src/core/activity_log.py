@@ -12,7 +12,7 @@ from typing import Literal
 
 from config.settings import ACTIVITY_LOG_FILE
 
-ActivityKind = Literal["sleep", "study", "debate", "self_repair"]
+ActivityKind = Literal["sleep", "study", "debate", "self_repair", "external_dialogue"]
 
 
 def _load_all() -> list[dict]:

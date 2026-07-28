@@ -25,7 +25,7 @@ from src.debate.scheduler import maybe_run_nightly_debate_autonomous
 from src.memory import avatar, conversations, hippocampus
 from src.memory.avatar_catalog import AVATAR_CATALOG
 from src.memory.scheduler import maybe_run_nightly_sleep
-from src.study.scheduler import maybe_run_nightly_study
+from src.study.scheduler import maybe_run_nightly_external_dialogue, maybe_run_nightly_study
 
 console = Console()
 
@@ -43,7 +43,7 @@ app = FastAPI(title="志粋 API")
 
 def _nightly_scheduler_loop() -> None:
     """夜間帯(既定23:00〜翌6:30)の間、記憶圧縮・青空文庫クロール・夜間修行・
-    自律討論を順番にチェックし続ける永続ループ。
+    自律討論・夜間対話を順番にチェックし続ける永続ループ。
 
     以前は「アプリ起動時に1回だけ」チェックしていたため、サーバーを再起動
     せずに何日も動かし続けると2日目以降トリガーされなくなるバグがあった。
@@ -56,6 +56,7 @@ def _nightly_scheduler_loop() -> None:
             maybe_run_nightly_archive_crawl()
             maybe_run_nightly_study()
             maybe_run_nightly_debate_autonomous()
+            maybe_run_nightly_external_dialogue()
         except Exception as exc:  # noqa: BLE001
             console.print(f"[yellow]夜間スケジューラの巡回でエラー(継続します): {exc}[/yellow]")
         time.sleep(settings.night_mode_check_interval_seconds)
@@ -64,7 +65,7 @@ def _nightly_scheduler_loop() -> None:
 @app.on_event("startup")
 def _start_nightly_scheduler() -> None:
     # Next.jsフロントエンド経由(このFastAPIだけ)で使う場合でも、記憶圧縮・
-    # 青空文庫クロール・夜間修行・自律討論が自動で動くようにする。
+    # 青空文庫クロール・夜間修行・自律討論・夜間対話が自動で動くようにする。
     threading.Thread(target=_nightly_scheduler_loop, daemon=True).start()
 
 app.add_middleware(

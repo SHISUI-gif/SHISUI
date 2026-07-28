@@ -38,6 +38,37 @@ const KIND_LABEL: Record<ActivityEntry["kind"], string> = {
   study: "📚 夜間修行",
   debate: "💬 自律討論",
   self_repair: "🔧 自己修復",
+  external_dialogue: "🌐 夜間対話",
+}
+
+/** debate/external_dialogueのdetailsから、話者ごとの発言リストを取り出す。
+ * それまでconclusion_summary/insight(要約)しか無く、実際のやり取りが
+ * 一切見えなかった(2026-07-29、那由多さんの要望で追加)。両方の形を
+ * 共通の { topic, entries: {who, content}[] }[] に正規化する。 */
+function extractTranscripts(
+  activity: ActivityEntry
+): { topic: string; entries: { who: string; content: string }[] }[] {
+  const details = activity.details as Record<string, unknown>
+
+  if (activity.kind === "debate" && Array.isArray(details.transcripts)) {
+    return (details.transcripts as { topic: string; transcript: { speaker: string; content: string }[] }[]).map(
+      (t) => ({
+        topic: t.topic,
+        entries: (t.transcript ?? []).map((e) => ({ who: e.speaker, content: e.content })),
+      })
+    )
+  }
+
+  if (activity.kind === "external_dialogue" && Array.isArray(details.dialogues)) {
+    return (details.dialogues as { topic: string; dialogue: { role: string; content: string }[] }[]).map(
+      (t) => ({
+        topic: t.topic,
+        entries: (t.dialogue ?? []).map((e) => ({ who: e.role, content: e.content })),
+      })
+    )
+  }
+
+  return []
 }
 
 /**
@@ -79,6 +110,7 @@ function useCursorGlow(containerRef: React.RefObject<HTMLDivElement | null>) {
 export function ActivityLog({ isOpen, onClose, activities }: ActivityLogProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const glow = useCursorGlow(containerRef)
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
 
   const latest = activities[0]
   const counts = activities.reduce<Record<string, number>>((acc, activity) => {
@@ -194,6 +226,10 @@ export function ActivityLog({ isOpen, onClose, activities }: ActivityLogProps) {
                         <span className="text-white/40">自己修復</span>
                         <span className="text-white/70">{counts.self_repair ?? 0}件</span>
                       </div>
+                      <div className="flex items-center justify-between font-mono text-xs">
+                        <span className="text-white/40">夜間対話</span>
+                        <span className="text-white/70">{counts.external_dialogue ?? 0}件</span>
+                      </div>
                     </div>
                   </div>
 
@@ -231,19 +267,56 @@ export function ActivityLog({ isOpen, onClose, activities }: ActivityLogProps) {
                   initial="hidden"
                   animate="visible"
                 >
-                  {activities.map((activity, index) => (
-                    <motion.div
-                      key={`${activity.timestamp}-${index}`}
-                      variants={listItem}
-                      className="border-b border-white/5 pb-3"
-                    >
-                      <p className="font-mono text-[10px] uppercase tracking-wider text-[#b8935a]/70">
-                        {KIND_LABEL[activity.kind]}
-                      </p>
-                      <p className="mt-1 text-sm text-white/70">{activity.summary}</p>
-                      <p className="mt-1 font-mono text-[10px] text-white/25">{activity.timestamp}</p>
-                    </motion.div>
-                  ))}
+                  {activities.map((activity, index) => {
+                    const transcripts = extractTranscripts(activity)
+                    const isExpanded = expandedIndex === index
+
+                    return (
+                      <motion.div
+                        key={`${activity.timestamp}-${index}`}
+                        variants={listItem}
+                        className="border-b border-white/5 pb-3"
+                      >
+                        <p className="font-mono text-[10px] uppercase tracking-wider text-[#b8935a]/70">
+                          {KIND_LABEL[activity.kind]}
+                        </p>
+                        <p className="mt-1 text-sm text-white/70">{activity.summary}</p>
+                        <p className="mt-1 font-mono text-[10px] text-white/25">{activity.timestamp}</p>
+
+                        {transcripts.length > 0 && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedIndex(isExpanded ? null : index)}
+                              className="mt-2 font-mono text-[10px] text-[#b8935a]/70 hover:text-[#b8935a]"
+                            >
+                              {isExpanded ? "▲ 全文を閉じる" : "▼ 全文を見る"}
+                            </button>
+
+                            {isExpanded && (
+                              <div className="mt-3 space-y-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                                {transcripts.map((t, tIndex) => (
+                                  <div key={tIndex}>
+                                    <p className="font-mono text-[10px] uppercase tracking-wider text-white/40">
+                                      {t.topic}
+                                    </p>
+                                    <div className="mt-2 space-y-2">
+                                      {t.entries.map((entry, eIndex) => (
+                                        <p key={eIndex} className="text-xs text-white/70">
+                                          <span className="text-[#b8935a]/80">{entry.who}: </span>
+                                          {entry.content}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </motion.div>
+                    )
+                  })}
                 </motion.div>
               </div>
             </div>

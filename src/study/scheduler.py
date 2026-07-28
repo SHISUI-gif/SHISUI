@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from config.settings import STUDY_MARKER_FILE
+from config.settings import EXTERNAL_DIALOGUE_MARKER_FILE, STUDY_MARKER_FILE
 from src.core import night_schedule
+from src.study.external_dialogue import run_external_dialogue_session
 from src.study.study_session import run_study_session
 
 console = Console()
@@ -52,3 +53,36 @@ def maybe_run_nightly_study() -> None:
             )
     except Exception as exc:  # noqa: BLE001
         console.print(f"[yellow]夜間修行の自動実行に失敗しました(会話は続行します): {exc}[/yellow]")
+
+
+def maybe_run_nightly_external_dialogue() -> None:
+    """今夜まだ夜間対話(先輩AI、OpenRouter無料枠)を実行していなければ実行する。
+
+    夜間修行(Gemini)とは別マーカー・別ジョブとして独立に動く。
+    OPENROUTER_API_KEY未設定ならrun_external_dialogue_session()側で静かに
+    スキップされる(こちらでは判定しない、study.scheduler全体の設計を統一するため)。
+    マーカーの排他確保はmaybe_run_nightly_studyと同じ理由・同じ仕組み。
+    """
+    night_key = night_schedule.current_night_key()
+    if night_key is None:
+        return
+
+    if EXTERNAL_DIALOGUE_MARKER_FILE.exists():
+        if EXTERNAL_DIALOGUE_MARKER_FILE.read_text(encoding="utf-8").strip() == night_key:
+            return
+        EXTERNAL_DIALOGUE_MARKER_FILE.unlink()
+
+    try:
+        with open(EXTERNAL_DIALOGUE_MARKER_FILE, "x", encoding="utf-8") as f:
+            f.write(night_key)
+    except FileExistsError:
+        return  # 別プロセスがこの瞬間に既に確保した
+
+    try:
+        result = run_external_dialogue_session()
+        if not result.skipped:
+            console.print(
+                f"[dim]🌐 夜間対話実行: {len(result.topics_discussed)}トピックについて先輩AIと話した[/dim]"
+            )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]夜間対話の自動実行に失敗しました(会話は続行します): {exc}[/yellow]")

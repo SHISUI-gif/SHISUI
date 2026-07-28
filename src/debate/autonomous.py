@@ -28,6 +28,7 @@ class DebatedTopic:
     conclusion_summary: str
     report_path: str
     memory_id: str
+    transcript: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -66,6 +67,7 @@ def run_autonomous_debate(llm: OllamaClient | None = None) -> AutonomousDebateRe
             conclusion_summary=summary,
             report_path=str(debate_result.report_path),
             memory_id=memory_id,
+            transcript=debate_result.transcript,
         )
         result.topics_debated.append(debated)
         session_topics.append({"topic": topic, "insight": summary, "memory_id": memory_id})
@@ -83,6 +85,12 @@ def run_autonomous_debate(llm: OllamaClient | None = None) -> AutonomousDebateRe
         details={
             "topics": [t.topic for t in result.topics_debated],
             "conclusions": [t.conclusion_summary for t in result.topics_debated],
+            # 2026-07-29、那由多さんの要望(討論の中身自体をログで見たい)を受けて追加。
+            # それまではconclusion_summary(300文字)しか残らず、討論の過程が
+            # 一切見えなかった
+            "transcripts": [
+                {"topic": t.topic, "transcript": t.transcript} for t in result.topics_debated
+            ],
         },
     )
     return result

@@ -82,6 +82,24 @@ def test_run_autonomous_debate_appends_unread_session(monkeypatch):
     assert study_report.get_unread_report() == ""
 
 
+def test_run_autonomous_debate_logs_full_transcript_to_activity_log(monkeypatch):
+    """2026-07-29の回帰テスト: それまでactivity_logにはconclusion_summary(300文字)
+    しか残らず、討論の実際のやり取りが一切見えなかった(那由多さんの要望で追加)。"""
+    monkeypatch.setattr(
+        weakness_finder, "find_weak_topics", lambda top_n=None, llm=None: ["テストトピック"]
+    )
+
+    autonomous.run_autonomous_debate(llm=FakeLLM())
+
+    recent = activity_log.get_recent_activity()
+    assert len(recent) == 1
+    transcripts = recent[0]["details"]["transcripts"]
+    assert transcripts[0]["topic"] == "テストトピック"
+    assert len(transcripts[0]["transcript"]) > 0
+    assert "speaker" in transcripts[0]["transcript"][0]
+    assert "content" in transcripts[0]["transcript"][0]
+
+
 def test_run_autonomous_debate_does_not_prompt_for_input(monkeypatch):
     """ユーザー不在のため、collect_feedbackのようなinput()待ちが一切発生しないことを確認する。"""
     monkeypatch.setattr(

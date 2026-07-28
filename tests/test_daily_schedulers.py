@@ -186,3 +186,65 @@ def test_maybe_run_nightly_debate_autonomous_skips_when_another_process_just_cla
     debate_scheduler.maybe_run_nightly_debate_autonomous()
 
     assert calls == []
+
+
+def test_maybe_run_nightly_external_dialogue_runs_when_marker_missing(monkeypatch, tmp_path):
+    marker = tmp_path / "last_external_dialogue_date.txt"
+    monkeypatch.setattr(study_scheduler, "EXTERNAL_DIALOGUE_MARKER_FILE", marker)
+    monkeypatch.setattr(night_schedule, "current_night_key", lambda: FIXED_NIGHT_KEY)
+
+    calls = []
+    monkeypatch.setattr(
+        study_scheduler,
+        "run_external_dialogue_session",
+        lambda: calls.append(1) or _FakeResult(topics_discussed=[]),
+    )
+
+    study_scheduler.maybe_run_nightly_external_dialogue()
+
+    assert calls == [1]
+    assert marker.read_text(encoding="utf-8").strip() == FIXED_NIGHT_KEY
+
+
+def test_maybe_run_nightly_external_dialogue_skips_outside_night_window(monkeypatch, tmp_path):
+    marker = tmp_path / "last_external_dialogue_date.txt"
+    monkeypatch.setattr(study_scheduler, "EXTERNAL_DIALOGUE_MARKER_FILE", marker)
+    monkeypatch.setattr(night_schedule, "current_night_key", lambda: None)
+
+    calls = []
+    monkeypatch.setattr(study_scheduler, "run_external_dialogue_session", lambda: calls.append(1))
+
+    study_scheduler.maybe_run_nightly_external_dialogue()
+
+    assert calls == []
+    assert not marker.exists()
+
+
+def test_maybe_run_nightly_external_dialogue_skips_when_already_run_tonight(monkeypatch, tmp_path):
+    marker = tmp_path / "last_external_dialogue_date.txt"
+    marker.write_text(FIXED_NIGHT_KEY, encoding="utf-8")
+    monkeypatch.setattr(study_scheduler, "EXTERNAL_DIALOGUE_MARKER_FILE", marker)
+    monkeypatch.setattr(night_schedule, "current_night_key", lambda: FIXED_NIGHT_KEY)
+
+    calls = []
+    monkeypatch.setattr(study_scheduler, "run_external_dialogue_session", lambda: calls.append(1))
+
+    study_scheduler.maybe_run_nightly_external_dialogue()
+
+    assert calls == []
+
+
+def test_maybe_run_nightly_external_dialogue_skips_when_another_process_just_claimed_it(
+    monkeypatch, tmp_path
+):
+    marker = tmp_path / "last_external_dialogue_date.txt"
+    monkeypatch.setattr(study_scheduler, "EXTERNAL_DIALOGUE_MARKER_FILE", marker)
+    monkeypatch.setattr(night_schedule, "current_night_key", lambda: FIXED_NIGHT_KEY)
+    marker.write_text(FIXED_NIGHT_KEY, encoding="utf-8")
+
+    calls = []
+    monkeypatch.setattr(study_scheduler, "run_external_dialogue_session", lambda: calls.append(1))
+
+    study_scheduler.maybe_run_nightly_external_dialogue()
+
+    assert calls == []
