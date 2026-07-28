@@ -43,19 +43,23 @@ function convertBoldToRawHtml(content: string): string {
  */
 export function MarkdownContent({ content, className }: MarkdownContentProps) {
   return (
-    <div className={cn("text-sm leading-relaxed", className)}>
+    <div className={cn("min-w-0 text-sm leading-relaxed", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw]}
         components={{
-          p: ({ children }) => <p className="mb-2 last:mb-0 whitespace-pre-wrap">{children}</p>,
+          p: ({ children }) => (
+            <p className="mb-2 whitespace-pre-wrap break-words last:mb-0">{children}</p>
+          ),
           strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
           em: ({ children }) => <em className="italic">{children}</em>,
           ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
           ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
-          li: ({ children }) => <li>{children}</li>,
+          li: ({ children }) => <li className="break-words">{children}</li>,
           code: ({ children }) => (
-            <code className="bg-white/10 px-1 py-0.5 font-mono text-[0.85em]">{children}</code>
+            <code className="break-words bg-white/10 px-1 py-0.5 font-mono text-[0.85em]">
+              {children}
+            </code>
           ),
           pre: ({ children }) => (
             <pre className="mb-2 overflow-x-auto rounded-md bg-white/10 p-3 font-mono text-[0.85em] last:mb-0">
@@ -67,11 +71,22 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#b8935a] underline underline-offset-2 hover:text-[#b8935a]/70"
+              className="break-words text-[#b8935a] underline underline-offset-2 hover:text-[#b8935a]/70"
             >
               {children}
             </a>
           ),
+          // remark-gfmのテーブルは折り返さないため、pre(コードブロック)と同じく
+          // 横スクロールで収める(そうしないと表がそのまま画面外へはみ出す)
+          table: ({ children }) => (
+            <div className="mb-2 overflow-x-auto last:mb-0">
+              <table className="border-collapse text-left">{children}</table>
+            </div>
+          ),
+          th: ({ children }) => (
+            <th className="border border-white/10 px-2 py-1 font-semibold">{children}</th>
+          ),
+          td: ({ children }) => <td className="border border-white/10 px-2 py-1">{children}</td>,
         }}
       >
         {convertBoldToRawHtml(content)}

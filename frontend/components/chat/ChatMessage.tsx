@@ -37,9 +37,11 @@ export function ChatMessage({ message, isStreamingNow, turnIndex }: ChatMessageP
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: DURATION.fast, ease: EASE }}
       >
-        <div className="ml-auto max-w-[80%] text-right">
+        <div className="ml-auto min-w-0 max-w-[80%] text-right">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#b8935a]/60">YOU</p>
-          <p className="mt-1 text-base font-medium leading-snug text-white">{message.content}</p>
+          <p className="mt-1 break-words text-base font-medium leading-snug text-white">
+            {message.content}
+          </p>
         </div>
       </motion.div>
     )
@@ -54,7 +56,7 @@ export function ChatMessage({ message, isStreamingNow, turnIndex }: ChatMessageP
       // delayを付けることで「ユーザー→志粋」の順で現れる段階的リビールにする
       transition={{ duration: DURATION.fast, ease: EASE, delay: 0.1 }}
     >
-      <div className="relative w-full max-w-full pl-5">
+      <div className="relative w-full min-w-0 max-w-full pl-5">
         {/* ターン番号のゴースト数字。ヘッダーの№表示と同じ数字・同じフォント/極薄opacityの
             組み合わせを使い回すことで、ヘッダーとメッセージリストが1つの体系だと分かるようにする */}
         {turnIndex !== undefined && (
