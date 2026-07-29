@@ -101,6 +101,25 @@ def test_execute_web_search_combines_both_sources(monkeypatch):
     assert "DDG結果" in result
 
 
+def test_execute_web_search_truncates_long_result_content(monkeypatch):
+    """2026-07-29の回帰テスト: 検索結果のcontentが無制限だと、複数件分を合わせて
+    会話履歴に載せた際にGroqのTPM(1分あたりトークン数)上限を超えて413になる
+    実害があった。1件あたりの上限を超えて渡さないこと。"""
+    long_content = "あ" * 5000
+    monkeypatch.setattr(
+        tools,
+        "WebSearchClient",
+        _FakeSuccessClient([_FakeResult("長いタイトル", "https://example.com/long", long_content)]),
+    )
+    monkeypatch.setattr(tools, "DuckDuckGoSearchClient", _FakeEmptyClient)
+
+    result = tools.execute_web_search("テスト検索")
+
+    assert len(result) < len(long_content)
+    assert "あ" * tools._MAX_SEARCH_RESULT_CONTENT_CHARS in result
+    assert "あ" * (tools._MAX_SEARCH_RESULT_CONTENT_CHARS + 1) not in result
+
+
 def test_execute_web_search_deduplicates_same_url_across_sources(monkeypatch):
     same_url = "https://example.com/article"
     monkeypatch.setattr(

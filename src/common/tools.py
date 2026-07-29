@@ -19,6 +19,13 @@ from src.research.news_client import NewsClient, format_headlines_for_llm
 from src.research.weather_client import WeatherClient, format_weather_for_llm
 from src.research.web_search import DuckDuckGoSearchClient, WebSearchClient
 
+# 検索結果1件あたりのcontentの上限文字数。無制限だと複数件分を合わせて
+# 会話履歴に載せた際、GroqのTPM(1分あたりトークン数)上限を超えて413に
+# なりうる(2026-07-29、max_completion_tokensの予約分だけでも413になる本番
+# 障害を調査した際に、検索結果自体も未制限だったことが分かったため、
+# 予防的にここも制限する)。
+_MAX_SEARCH_RESULT_CONTENT_CHARS = 600
+
 WEB_SEARCH_TOOL_SCHEMA = {
     "type": "function",
     "function": {
@@ -84,7 +91,7 @@ def execute_web_search(query: str, max_results: int = 5) -> str:
         unique_results.append(r)
 
     return "\n\n".join(
-        f"[{i + 1}] {r.title}\nURL: {r.url}\n内容: {r.content}"
+        f"[{i + 1}] {r.title}\nURL: {r.url}\n内容: {r.content[:_MAX_SEARCH_RESULT_CONTENT_CHARS]}"
         for i, r in enumerate(unique_results)
     )
 

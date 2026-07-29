@@ -144,7 +144,13 @@ def test_chat_streaming_splits_think_tags_across_chunk_boundaries(monkeypatch):
 def test_chat_sets_a_generous_max_completion_tokens(monkeypatch):
     """2026-07-28の回帰テスト: max_completion_tokensを省略するとGroq側の
     デフォルト値に依存してしまい、「回答が途中で途切れる」という実際の
-    フィードバックにつながった。明示的に十分な上限を渡すべき。"""
+    フィードバックにつながった。明示的に十分な上限を渡すべき。
+
+    2026-07-29に本番で追加確認: GroqのTPM(1分あたりトークン数)判定は
+    プロンプトの実トークン数だけでなくmax_completion_tokens(予約分)も
+    合算するため、qwen3.6-27bのTPM上限(8000)を単独で超える8192を渡すと、
+    プロンプトがどれだけ短くても必ず413(Request too large)になっていた。
+    分類モデルのTPM上限(6000)にも収まる4096に引き下げた。"""
     fake_response = types.SimpleNamespace(
         choices=[types.SimpleNamespace(message=_fake_message(content="こんにちは"))]
     )
@@ -153,7 +159,8 @@ def test_chat_sets_a_generous_max_completion_tokens(monkeypatch):
 
     groq_client.chat(model="qwen/qwen3.6-27b", messages=[{"role": "user", "content": "hi"}])
 
-    assert completions.last_kwargs["max_completion_tokens"] == 8192
+    assert completions.last_kwargs["max_completion_tokens"] == 4096
+    assert completions.last_kwargs["max_completion_tokens"] < 6000  # classifierのTPM上限にも収まること
 
 
 def test_embeddings_returns_ollama_shaped_response(monkeypatch):
