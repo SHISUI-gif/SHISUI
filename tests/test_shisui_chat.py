@@ -492,6 +492,36 @@ def test_call_tool_ignoring_unknown_kwargs_still_works_with_no_extra_args():
     assert result == "location=大阪"
 
 
+def test_stream_shisui_events_handles_tool_call_with_none_arguments(monkeypatch, tmp_path):
+    """2026-07-31に本番で実際に発生: get_today_news/get_weatherのように全パラメータ
+    が省略可能(required=[])なツールを、モデルが無引数で呼び出した場合、
+    argumentsが{}ではなくNoneになることがあり、arguments.get("query", "")で
+    AttributeErrorが起きて会話全体が落ちていた。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+    monkeypatch.setattr(shisui_chat, "AVAILABLE_TOOLS", {"get_weather": lambda **kwargs: "晴れ、25度"})
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "get_weather", "arguments": None}}],
+                }
+            }
+
+        def gen():
+            yield {"message": {"content": "今日は晴れだよ!"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    results = list(shisui_chat.stream_shisui_reply("今日の天気は?", []))
+
+    assert results[-1] == "今日は晴れだよ!"
+
+
 def test_stream_shisui_events_falls_back_when_groq_tool_detection_rejects_call(monkeypatch, tmp_path):
     """2026-07-27に本番で実際に発生: Groqの軽量モデル(llama-3.1-8b-instant)が
     構造化ツール呼び出しの代わりに独自記法("<function=...>")を出力し、Groqが

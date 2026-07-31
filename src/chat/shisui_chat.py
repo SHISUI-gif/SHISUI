@@ -468,7 +468,10 @@ def _stream_shisui_events_inner(
         messages.append(assistant_message)
         for call in tool_calls:
             tool_name = call["function"]["name"]
-            arguments = call["function"]["arguments"]
+            # get_today_news/get_weatherのように全パラメータが省略可能なツールは、
+            # モデルが無引数で呼び出した場合argumentsが{}ではなくNoneになることが
+            # ある(2026-07-31、本番で実際にAttributeErrorとして発生)。
+            arguments = call["function"]["arguments"] or {}
             query = arguments.get("query", "")
             yield ChatEvent(type="tool_status", text=f"🔍 「{query}」について自律検索中...ちょっと待ってね!")
 
