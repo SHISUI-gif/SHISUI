@@ -184,6 +184,19 @@ def chat(
     stream: bool = False,
     think: bool | None = None,  # noqa: ARG001 - Ollama固有、Groqには概念が無いため無視
     keep_alive: str | None = None,  # noqa: ARG001 - 同上
+    # 省略時のGroq側デフォルト値に依存すると、長めの応答が途中で打ち切られる
+    # ことがあった(2026-07-28、「回答が途中で途切れる」というフィードバックを
+    # 受けて調査・対処)。
+    # 2026-07-29に本番で再発した413(Request too large、qwen3.6-27bのTPM 8000)を
+    # 調査した結果、GroqのTPM(1分あたりトークン数)判定はプロンプトの実トークン数
+    # だけでなく、max_completion_tokens(=「最大この分だけ生成する可能性がある」と
+    # いう予約分)も合算してチェックしていることが判明した。旧来の8192は
+    # qwen3.6-27bのTPM上限(8000)を単独で超えており、プロンプトがどれだけ短くても
+    # 必ず413になる状態だった。会話1ターンの応答量としては潤沢な4096をデフォルトに
+    # 引き下げる。ツール判定のようにごく短い出力しか要らない呼び出しは、呼び出し側
+    # (src/chat/shisui_chat.py)がさらに小さい値を明示的に渡して、分類モデルの
+    # TPM上限(6000)によりしっかり収める。
+    max_completion_tokens: int = 4096,
 ) -> dict | Iterator[dict]:
     """Ollamaの`ollama.chat()`と同じシグネチャ・戻り値の形でGroqを呼ぶ。"""
     client = _get_client()
@@ -192,17 +205,7 @@ def chat(
         messages=_messages_to_groq_shape(messages),
         tools=tools,
         stream=stream,
-        # 省略時のGroq側デフォルト値に依存すると、長めの応答が途中で打ち切られる
-        # ことがあった(2026-07-28、「回答が途中で途切れる」というフィードバックを
-        # 受けて調査・対処)。
-        # 2026-07-29に本番で再発した413(Request too large、qwen3.6-27bのTPM 8000)を
-        # 調査した結果、GroqのTPM(1分あたりトークン数)判定はプロンプトの実トークン数
-        # だけでなく、max_completion_tokens(=「最大この分だけ生成する可能性がある」と
-        # いう予約分)も合算してチェックしていることが判明した。旧来の8192は
-        # qwen3.6-27bのTPM上限(8000)を単独で超えており、プロンプトがどれだけ短くても
-        # 必ず413になる状態だった。分類モデル(classifier)のTPM上限(6000)にも
-        # 十分収まり、かつ会話1ターンの応答量としては潤沢な4096に引き下げる。
-        max_completion_tokens=4096,
+        max_completion_tokens=max_completion_tokens,
     )
 
     if stream:

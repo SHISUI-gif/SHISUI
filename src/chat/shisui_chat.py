@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import inspect
+import math
 import os
 import re
 import threading
@@ -147,6 +148,51 @@ _TOOL_DETECTION_HISTORY_TURNS = 6
 # より文脈の連続性が重要なため、少し長めに取る。
 _MAIN_GENERATION_HISTORY_TURNS = 20
 
+# 2026-07-31、上記2つの「ターン数」による打ち切りだけでは413(Request too large)を
+# 防ぎきれないことが本番で再確認された(max_completion_tokensを8192→4096に
+# 下げた後も、"Requested 8889"/"Requested 6410"のように依然としてTPM上限を
+# 超過し続けていた)。ターン数は固定でも、1ターンあたりの文字数は会話によって
+# 大きく変わる(ユーザーの長文貼り付け・志粋自身の長めの返答など)ため、
+# 件数ベースの上限では実際のトークン量を抑えきれない。ここから下は、実際の
+# 文字数からトークン数を概算し、Groq利用時(settings.use_groq)に限って履歴を
+# 動的に(会話が長い/重いほど多く)間引く、トークン予算ベースの安全網を追加する。
+# ローカルOllama利用時はTPMという概念自体が無いため対象外。
+_GROQ_MAIN_GENERATION_TPM_LIMIT = 8000  # qwen/qwen3.6-27b(groq_chat_model)の無料枠TPM
+_GROQ_TOOL_DETECTION_TPM_LIMIT = 6000  # llama-3.1-8b-instant(groq_classifier_model)の無料枠TPM
+_GROQ_SAFETY_MARGIN_TOKENS = 500  # 概算誤差・メッセージのrole/JSON構造オーバーヘッド分の余裕
+# ツール判定は関数呼び出しの引数(短いJSON)か「ツール不要」の判定だけを返せば
+# よく、雑談の返答のような長さは要らない。予約分を大きく減らすほど、TPM予算の
+# うち実際の履歴に回せる分が増える。
+_TOOL_DETECTION_MAX_COMPLETION_TOKENS = 512
+# groq_client.chat()のmax_completion_tokens既定値(4096)と一致させる。ここで
+# 明示的に参照するのは、TPM予算計算(下記_trim_history_to_token_budget呼び出し)を
+# groq_client.py側の実際の予約量とズレないようにするため。
+_MAIN_GENERATION_MAX_COMPLETION_TOKENS = 4096
+
+
+def _estimate_tokens(text: str) -> int:
+    """Groqの正確なトークナイザ計算はせず、日本語混じりのテキストで1トークン
+    あたり平均1.5文字程度という経験則に基づく、安全側(多め)の概算を使う。
+    実際より少なく見積もって上限を超えるより、多めに見積もって早めに履歴を
+    間引く方が安全なため。"""
+    return math.ceil(len(text) / 1.5)
+
+
+def _trim_history_to_token_budget(history: list[dict], budget: int) -> list[dict]:
+    """新しい発言を優先して残しつつ、推定トークン数がbudget以下に収まるよう
+    履歴を古い方から間引く。budgetが十分大きければ何も削らない。budgetが
+    0以下でも、直近1件だけは(文脈が完全に消えるよりはましなため)残す。"""
+    kept: list[dict] = []
+    total = 0
+    for turn in reversed(history):
+        turn_tokens = _estimate_tokens(str(turn.get("content") or ""))
+        if kept and total + turn_tokens > budget:
+            break
+        total += turn_tokens
+        kept.append(turn)
+    kept.reverse()
+    return kept
+
 
 def _keep_alive_for(model: str) -> str:
     """モデルサイズに応じてkeep_aliveを変える。
@@ -191,7 +237,14 @@ def _stream_with_think_fallback(model: str, messages: list[dict]) -> Iterator[di
         candidates = [model, settings.groq_fallback_chat_model, settings.groq_second_fallback_chat_model]
         for i, candidate_model in enumerate(candidates):
             try:
-                yield from groq_client.chat(model=candidate_model, messages=messages, stream=True)
+                yield from groq_client.chat(
+                    model=candidate_model,
+                    messages=messages,
+                    stream=True,
+                    # _MAIN_GENERATION_MAX_COMPLETION_TOKENSと明示的に一致させる
+                    # (TPM予算計算で使っている予約量と実際の呼び出しがズレないように)。
+                    max_completion_tokens=_MAIN_GENERATION_MAX_COMPLETION_TOKENS,
+                )
                 return
             except groq.RateLimitError:
                 if i == len(candidates) - 1:
@@ -327,8 +380,20 @@ def _stream_shisui_events_inner(
         system_content += "\n\n" + unread_study_report
         study_report.mark_report_read()
 
+    main_history = _normalize_history(history)[-_MAIN_GENERATION_HISTORY_TURNS:]
+    if settings.use_groq:
+        reserved = (
+            _estimate_tokens(system_content)
+            + _estimate_tokens(user_message)
+            + _MAIN_GENERATION_MAX_COMPLETION_TOKENS
+            + _GROQ_SAFETY_MARGIN_TOKENS
+        )
+        main_history = _trim_history_to_token_budget(
+            main_history, _GROQ_MAIN_GENERATION_TPM_LIMIT - reserved
+        )
+
     messages = [{"role": "system", "content": system_content}]
-    messages.extend(_normalize_history(history)[-_MAIN_GENERATION_HISTORY_TURNS:])
+    messages.extend(main_history)
     messages.append({"role": "user", "content": user_message})
 
     hippocampus.log_episode(
@@ -349,17 +414,40 @@ def _stream_shisui_events_inner(
     # 会話が長くなるほどフルの履歴を渡すと軽量モデルのTPM(1分あたりトークン数)
     # 上限を超えて413(Request too large)になる実害があった(2026-07-28、本番で
     # 実際にlllama-3.1-8b-instantのTPM 6000を超過して発生)。
+    tool_history = _normalize_history(history)[-_TOOL_DETECTION_HISTORY_TURNS:]
+    if settings.use_groq:
+        # ツールスキーマ(ALL_TOOL_SCHEMAS)自体もリクエストのトークン数に加算される
+        # が、メッセージ本文ではないため_estimate_tokens()では測れない。ここは
+        # 実測せず、安全側のマージンを大きめ(1500)に取って吸収する。
+        reserved = (
+            _estimate_tokens(TOOL_DETECTION_SYSTEM_PROMPT)
+            + _estimate_tokens(user_message)
+            + _TOOL_DETECTION_MAX_COMPLETION_TOKENS
+            + _GROQ_SAFETY_MARGIN_TOKENS
+            + 1500
+        )
+        tool_history = _trim_history_to_token_budget(
+            tool_history, _GROQ_TOOL_DETECTION_TPM_LIMIT - reserved
+        )
+
     tool_messages = [{"role": "system", "content": TOOL_DETECTION_SYSTEM_PROMPT}]
-    tool_messages.extend(_normalize_history(history)[-_TOOL_DETECTION_HISTORY_TURNS:])
+    tool_messages.extend(tool_history)
     tool_messages.append({"role": "user", "content": user_message})
 
     tool_client = groq_client if settings.use_groq else ollama
     tool_model = settings.groq_classifier_model if settings.use_groq else settings.router_classifier_model
+    # ツール判定は関数呼び出しの引数(短いJSON)を返すだけでよく、雑談の返答のような
+    # 長さは要らないため、main-generation用の既定(4096)より大きく減らして予約分を
+    # 節約する(ollama.chat()にはこの引数が無いためGroq利用時のみ渡す)。
+    tool_extra_kwargs = (
+        {"max_completion_tokens": _TOOL_DETECTION_MAX_COMPLETION_TOKENS} if settings.use_groq else {}
+    )
     try:
         first_response = tool_client.chat(
             model=tool_model,
             messages=tool_messages,
             tools=ALL_TOOL_SCHEMAS,
+            **tool_extra_kwargs,
         )
         assistant_message = first_response["message"]
         tool_calls = assistant_message["tool_calls"] if "tool_calls" in assistant_message else None

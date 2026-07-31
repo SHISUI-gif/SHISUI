@@ -504,7 +504,7 @@ def test_stream_shisui_events_falls_back_when_groq_tool_detection_rejects_call(m
 
     fake_response = httpx.Response(400, request=httpx.Request("POST", "https://api.groq.com/x"))
 
-    def fake_groq_chat(model, messages, tools=None, stream=False):
+    def fake_groq_chat(model, messages, tools=None, stream=False, max_completion_tokens=None):
         if tools:
             raise groq.BadRequestError("tool_use_failed", response=fake_response, body=None)
         assert stream is True
@@ -531,7 +531,7 @@ def test_stream_shisui_events_falls_back_when_tool_detection_request_too_large(m
 
     fake_response = httpx.Response(413, request=httpx.Request("POST", "https://api.groq.com/x"))
 
-    def fake_groq_chat(model, messages, tools=None, stream=False):
+    def fake_groq_chat(model, messages, tools=None, stream=False, max_completion_tokens=None):
         if tools:
             raise groq.APIStatusError("request too large", response=fake_response, body=None)
         assert stream is True
@@ -611,6 +611,108 @@ def test_main_generation_call_caps_history_length(monkeypatch, tmp_path):
     assert len(main_messages) <= shisui_chat._MAIN_GENERATION_HISTORY_TURNS + 2
 
 
+def test_trim_history_to_token_budget_drops_oldest_first():
+    history = [{"role": "user", "content": "あ" * 30} for _ in range(5)]  # 各30文字≒20トークン
+
+    trimmed = shisui_chat._trim_history_to_token_budget(history, budget=45)
+
+    assert len(trimmed) < len(history)
+    assert trimmed == history[-len(trimmed):]  # 新しい方(末尾)が残ること
+
+
+def test_trim_history_to_token_budget_always_keeps_at_least_one_turn():
+    history = [{"role": "user", "content": "あ" * 10000}]
+
+    trimmed = shisui_chat._trim_history_to_token_budget(history, budget=0)
+
+    assert trimmed == history
+
+
+def test_main_generation_trims_history_further_by_token_budget_when_using_groq(monkeypatch, tmp_path):
+    """2026-07-31に本番で実際に発生: ターン数(_MAIN_GENERATION_HISTORY_TURNS=20)
+    による打ち切りだけでは413を防ぎきれなかった(max_completion_tokensを
+    8192→4096に下げた後も"Requested 8889"のように依然TPM上限を超過し続けた)。
+    1ターンあたりの文字数が大きいと、件数は20件以下でも合計トークン数が
+    予算を超えうるため、Groq利用時は実際の文字数に基づいてさらに間引くべき。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+    monkeypatch.setattr(shisui_chat, "settings", dataclasses.replace(shisui_chat.settings, use_groq=True))
+
+    captured = {}
+    # 20件以下(ターン数上限は超えない)だが、1件あたり2000文字の長文
+    # (実際の会話で長文貼り付け・長めの返答が続いた状況を模す)
+    long_content_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": "あ" * 2000} for i in range(10)
+    ]
+
+    def fake_groq_chat(model, messages, tools=None, stream=False, max_completion_tokens=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+        captured["messages"] = messages
+        return iter([{"message": {"content": "応答するね。"}}])
+
+    monkeypatch.setattr(shisui_chat.groq_client, "chat", fake_groq_chat)
+
+    list(shisui_chat.stream_shisui_reply("最新の発言", long_content_history))
+
+    main_messages = captured["messages"]
+    # ターン数上限(10件)より厳しく間引かれ、トークン予算内に収まっていること
+    assert len(main_messages) < len(long_content_history) + 2
+
+
+def test_main_generation_does_not_trim_by_token_budget_when_not_using_groq(monkeypatch, tmp_path):
+    """ローカルOllamaにはTPMという概念が無いため、use_groq=Falseの時は
+    トークン予算による追加の間引きを行わない(ターン数上限のみ)。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+
+    captured = {}
+    long_content_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": "あ" * 2000} for i in range(10)
+    ]
+
+    def fake_chat(model, messages, tools=None, stream=False, think=None, keep_alive=None):
+        if tools:
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+
+        captured["messages"] = messages
+
+        def gen():
+            yield {"message": {"content": "応答するね。"}}
+
+        return gen()
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    list(shisui_chat.stream_shisui_reply("最新の発言", long_content_history))
+
+    main_messages = captured["messages"]
+    assert len(main_messages) == len(long_content_history) + 2
+
+
+def test_tool_detection_uses_reduced_max_completion_tokens_when_using_groq(monkeypatch, tmp_path):
+    """2026-07-31の回帰テスト: ツール判定は関数呼び出しの短い引数(または
+    「ツール不要」の判定)だけを返せばよく、main-generation用の予約量(4096)は
+    過剰だった。qwen3.6-27bのTPM(8000)判定がmax_completion_tokens自体も
+    合算していると分かったため、分類モデルのTPM(6000)により確実に収まる
+    小さい値を明示的に渡すべき。"""
+    monkeypatch.setattr(error_log, "ERROR_LOG_FILE", tmp_path / "error_log.json")
+    monkeypatch.setattr(shisui_chat, "settings", dataclasses.replace(shisui_chat.settings, use_groq=True))
+
+    captured = {}
+
+    def fake_groq_chat(model, messages, tools=None, stream=False, max_completion_tokens=None):
+        if tools:
+            captured["max_completion_tokens"] = max_completion_tokens
+            return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
+        return iter([{"message": {"content": "応答するね。"}}])
+
+    monkeypatch.setattr(shisui_chat.groq_client, "chat", fake_groq_chat)
+
+    list(shisui_chat.stream_shisui_reply("最新の発言", []))
+
+    assert captured["max_completion_tokens"] == shisui_chat._TOOL_DETECTION_MAX_COMPLETION_TOKENS
+    assert captured["max_completion_tokens"] < 6000
+
+
 def test_stream_shisui_reply_falls_back_to_secondary_groq_model_on_rate_limit(monkeypatch):
     """2026-07-27に本番で実際に発生: Groq無料枠のTPD(1日あたりトークン)上限に
     達すると429が返り、会話が完全に止まってしまっていた。モデルごとに独立した
@@ -626,7 +728,7 @@ def test_stream_shisui_reply_falls_back_to_secondary_groq_model_on_rate_limit(mo
     fake_response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/x"))
     calls = []
 
-    def fake_groq_chat(model, messages, tools=None, stream=False):
+    def fake_groq_chat(model, messages, tools=None, stream=False, max_completion_tokens=None):
         if tools:
             return {"message": {"role": "assistant", "content": "", "tool_calls": None}}
         calls.append(model)
@@ -669,7 +771,7 @@ def test_stream_shisui_reply_returns_friendly_message_when_all_groq_tiers_exhaus
     fake_response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/x"))
     calls = []
 
-    def fake_groq_chat(model, messages, tools=None, stream=False):
+    def fake_groq_chat(model, messages, tools=None, stream=False, max_completion_tokens=None):
         if not stream:
             # ツール判定・モデル振り分け・感情検知など、この関数の対象外の
             # 分類系呼び出し。安全なデフォルトを返すだけにする。

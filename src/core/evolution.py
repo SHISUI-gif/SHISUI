@@ -126,11 +126,20 @@ def generate_fix_proposals() -> list[FixProposal]:
 
     ファイルが特定できない・LLMがdiffを出力しなかった場合は、修正案を作らずに
     既読化するだけに留める(同じエラーに何度も再挑戦し続けることを防ぐ)。
+
+    同じファイルへのエラーが1回のスキャンに複数積み上がっていた場合、2件目以降は
+    LLM呼び出し・テスト実行を伴う修正案生成を行わず既読化のみ行う(2026-07-31、
+    本番でgroq_client.pyの同一原因(413エラー)が短時間に14件連続で積み上がり、
+    毎回ほぼ同じ内容の修正案生成→テスト不合格→破棄を14回繰り返してGroqの
+    貴重な無料枠を浪費していたことが判明したための対処)。1回のスキャンで
+    その原因は大抵1つの修正案の成否で決着がつくため、同一ファイルへの2件目以降は
+    次回以降のスキャン(=1件目の修正が実際に適用された後)に委ねて構わない。
     """
     if not settings.evolution_enabled:
         return []
 
     proposals = []
+    attempted_files: set[str] = set()
     for error in error_log.get_unreviewed_errors():
         file_path = _extract_file_from_traceback(error["traceback"])
         if file_path is None:
@@ -138,6 +147,11 @@ def generate_fix_proposals() -> list[FixProposal]:
             continue
 
         relative_path = file_path.relative_to(BASE_DIR)
+        if str(relative_path) in attempted_files:
+            error_log.mark_reviewed(error["id"])
+            continue
+        attempted_files.add(str(relative_path))
+
         prompt = FIX_PROMPT_TEMPLATE.format(
             error_type=error["error_type"],
             message=error["message"],

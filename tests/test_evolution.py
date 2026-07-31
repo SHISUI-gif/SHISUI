@@ -128,6 +128,41 @@ def test_generate_fix_text_falls_back_to_third_tier_when_second_also_rate_limite
     assert calls == ["qwen/qwen3.6-27b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
 
 
+def test_generate_fix_proposals_only_attempts_one_proposal_per_file_per_scan(isolated_evolution, monkeypatch):
+    """2026-07-31に本番で実際に発生: 同じ原因(groq_client.pyの413)のエラーが
+    短時間に14件も積み上がり、1回のスキャンで同じファイルへほぼ同じ内容の
+    修正案生成(LLM呼び出し+テスト実行)を14回繰り返して貴重なGroq無料枠を
+    浪費していた。同一ファイルへの2件目以降は、LLMを呼ばずに既読化のみ
+    行うべき。"""
+    base_dir, pending_dir = isolated_evolution
+    buggy_file = _make_buggy_file(base_dir)
+    error_log.log_error("some_source", ZeroDivisionError("division by zero"))
+    error_log.log_error("some_source", ZeroDivisionError("division by zero"))
+    error_log.log_error("some_source", ZeroDivisionError("division by zero"))
+    records = error_log._load_all()
+    for record in records:
+        record["traceback"] = _traceback_for(buggy_file)
+    error_log._save_all(records)
+
+    calls = []
+
+    def fake_chat(model, messages):
+        calls.append(1)
+        fake_diff = (
+            "--- a/src/buggy.py\n+++ b/src/buggy.py\n@@ -1,2 +1,2 @@\n"
+            " def broken():\n-    return 1 / 0\n+    return 0\n"
+        )
+        return {"message": {"content": f"直しました。\n```diff\n{fake_diff}```"}}
+
+    monkeypatch.setattr(ollama, "chat", fake_chat)
+
+    proposals = evolution.generate_fix_proposals()
+
+    assert len(calls) == 1  # LLM呼び出しは1回だけ
+    assert len(proposals) == 1
+    assert error_log.get_unreviewed_errors() == []  # 残り2件も既読化されていること
+
+
 def test_generate_fix_proposals_skips_when_file_not_in_project(isolated_evolution, monkeypatch):
     error_log.log_error("some_source", ValueError("何か"))
     records = error_log._load_all()
